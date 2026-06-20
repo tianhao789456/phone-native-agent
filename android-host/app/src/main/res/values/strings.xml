@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">手机 Agent</string>
+    <string name="accessibility_description">允许手机 Agent 在你开启后观察并操作当前屏幕。</string>
+</resources>
