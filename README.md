@@ -53,16 +53,23 @@ Most mobile automation agents start from a desktop process that drives a phone o
 - cloud models provide reasoning, while tools and traces stay local;
 - task execution records evidence instead of trusting that a tool returning `ok=true` means the real-world goal is done.
 
-## Highlights
+## 核心亮点
 
-- Native Android Host App with Chinese UI, local status page, tool detail views, and runtime event feed.
-- OpenAI-compatible model support, including DeepSeek-style chat providers.
-- Managed task loop with evidence, verification state, completion review, retry budget, and failure reports.
-- Permission modes: `safe`, `ask`, `danger`, and `developer`.
-- Android/phone tools for screen observation, actions, app state, Termux API, notifications, camera/sensor extension points, and host bridge calls.
-- Workspace tools for reading, writing, searching, task artifacts, task reports, and plugin validation.
-- Plugin workflow with `validate`, `test`, and `run` reports.
-- Python test suite for the core loop, CLI, HTTP host, phone tools, plugins, Termux API, and host bridge.
+- 手机原生运行面：Android Host App 就是主界面、状态中心和工具入口，不是挂在电脑上的附属壳。
+- 中文优先：App UI、运行日志和操作说明已经按中文日常使用来做，开箱就能看懂。
+- 证据驱动闭环：`Plan / Act / Verify / Retry`，带完成复核、重试预算和失败报告，不是“工具回了 ok 就算完”。
+- 无障碍优先的手机控制：覆盖观察、点击、滑动、应用状态、通知等手机侧动作。
+- 可选 Termux 后端：终端和脚本执行是可插拔能力，不是强制把整套运行时都绑在终端上。
+- 远程 MCP 桥接：手机可以检查并调用你配置好的 MCP 服务器，部署好 Windows MCP 或其他桌面 MCP 后，就能通过局域网或 Tailscale 接电脑工具。
+- OpenAI 兼容模型接入：DeepSeek 这类兼容模型可以直接给本地工具做推理。
+- 工作区和插件支持：文件工具、任务产物、报告，以及 `validate` / `test` / `run` 的插件流程。
+- 内置稳定性修复：终端恢复、上下文裁剪、会话持久化，以及覆盖核心循环和工具面的 Python 测试。
+
+## 素材
+
+- [手机端截图](docs/assets/mobile-agent-home.png)
+- [仓库预览图](docs/assets/github-social-preview.png)
+- [v0.1.0 Release](https://github.com/tianhao789456/phone-native-agent/releases/tag/v0.1.0)
 
 ## Architecture
 
