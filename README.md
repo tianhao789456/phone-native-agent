@@ -1,11 +1,13 @@
-# Mobile Agent
+# Mobile Agent / 手机 Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/tianhao789456/phone-native-agent)](https://github.com/tianhao789456/phone-native-agent/releases/latest)
 
-A phone-resident AI agent prototype. It runs the agent loop, tools, task traces, plugin workflow, and Android host bridge close to the phone instead of treating the phone as a passive ADB target.
+手机原生 AI Agent 原型。它把 agent 循环、工具、任务轨迹、插件流程和 Android Host 桥接尽量放在手机侧，而不是把手机当成一个被动的 ADB 目标。
 
-The current project is experimental, but it is already more than a demo: it has a Kotlin Android Host App, a Python CLI/HTTP runtime, persistent sessions, Android screen/action tools, plugin reports, task workspaces, and a Plan / Act / Verify / Retry loop.
+当前项目仍然是实验性原型，但已经不是空壳 demo：它有 Kotlin Android Host App、Python CLI/HTTP 运行时、持久化会话、Android 屏幕/动作工具、插件报告、任务工作区，以及 `Plan / Act / Verify / Retry` 闭环。
+
+This repository is written for Chinese-first day-to-day use. The Android UI, runtime logs, and most operational notes are in Chinese, with English kept where it helps outside readers or upstream publishing.
 
 ![Mobile Agent Android host](docs/assets/mobile-agent-home.png)
 
@@ -13,6 +15,16 @@ Release assets and the repository preview image are available from the latest re
 
 - [v0.1.0 release](https://github.com/tianhao789456/phone-native-agent/releases/tag/v0.1.0)
 - [Social preview asset](docs/assets/github-social-preview.png)
+
+## 中文说明
+
+这个项目主要解决一件事：让手机自己承担自己的 Agent 执行面，而不是总依赖电脑去控制手机。
+
+- 手机端是主运行面，Android Host App 负责界面、状态和工具接入。
+- `AccessibilityService` 是主要的屏幕/动作后端。
+- `Termux` 是可选的终端/脚本后端，不是强依赖。
+- 模型负责推理，工具和证据尽量保留在本地。
+- 任务执行不是“工具返回 `ok=true` 就算完”，而是要有证据和验证状态。
 
 ## Why This Exists
 
