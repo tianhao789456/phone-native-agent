@@ -26,6 +26,23 @@ Release assets and the repository preview image are available from the latest re
 - 模型负责推理，工具和证据尽量保留在本地。
 - 任务执行不是“工具返回 `ok=true` 就算完”，而是要有证据和验证状态。
 
+## 中文快速开始
+
+```sh
+git clone https://github.com/tianhao789456/phone-native-agent.git
+cd phone-native-agent
+python -m venv .venv
+```
+
+Windows PowerShell：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
+python -m mobile_agent.hosts.cli --mock
+```
+
 ## Why This Exists
 
 Most mobile automation agents start from a desktop process that drives a phone over ADB. That is useful for research, but it keeps the agent dependent on a computer. This project explores the opposite direction:
