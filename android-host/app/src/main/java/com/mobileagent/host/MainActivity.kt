@@ -857,6 +857,22 @@ class MainActivity : Activity() {
             dialog.dismiss()
             runMemoryToolForDialog("procedure_list", JSONObject().put("limit", 50), "Procedure 列表") { formatProcedureList(it) }
         }
+        addButton("Skills 文档") {
+            dialog.dismiss()
+            runDocsToolForDialog(
+                "docs_read",
+                JSONObject().put("path", "docs/official/skills.md").put("max_bytes", 20000),
+                "Skills 文档"
+            ) { payload ->
+                val lines = mutableListOf<String>()
+                lines.add("路径: ${payload.optString("path", "-")}")
+                lines.add("标题: ${payload.optString("title", "-")}")
+                lines.add("")
+                lines.add(payload.optString("content", ""))
+                if (payload.optBoolean("truncated", false)) lines.add("\n... 文档已截断")
+                lines.joinToString("\n")
+            }
+        }
 
         dialog.show()
     }
@@ -987,6 +1003,24 @@ class MainActivity : Activity() {
     private fun runMemoryToolForDialog(tool: String, args: JSONObject, title: String, formatter: (JSONObject) -> String) {
         addMessage("系统", "正在执行：$tool")
         thread(name = "mobile-agent-memory-ui") {
+            val result = runCatching { nativeCore.executeNativeToolForDiagnostics(tool, args, true) }
+            ui.post {
+                result
+                    .onSuccess {
+                        val payload = it.optJSONObject("result") ?: it
+                        val text = formatter(payload)
+                        addMessage("工具", "$title\n${text.take(1200)}", detail = it.toString(2))
+                        showDetailsScrollable(title, text)
+                        refreshStatus()
+                    }
+                    .onFailure { addMessage("错误", it.message ?: it.javaClass.simpleName) }
+            }
+        }
+    }
+
+    private fun runDocsToolForDialog(tool: String, args: JSONObject, title: String, formatter: (JSONObject) -> String) {
+        addMessage("系统", "正在执行：$tool")
+        thread(name = "mobile-agent-docs-ui") {
             val result = runCatching { nativeCore.executeNativeToolForDiagnostics(tool, args, true) }
             ui.post {
                 result
