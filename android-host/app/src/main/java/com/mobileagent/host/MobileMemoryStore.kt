@@ -406,24 +406,30 @@ class MobileMemoryStore(context: Context) {
         val memory = searchMemory(userMessage, 5)
         val exp = searchExperience(JSONObject().put("query", userMessage).put("limit", 8))
         val procedures = procedureSearch(JSONObject().put("query", userMessage).put("limit", 3))
-        val memoryText = formatMemory(memory.optJSONArray("matches") ?: JSONArray())
-        val experienceText = formatExperience(exp.optJSONArray("matches") ?: JSONArray())
-        val procedureText = formatProcedures(procedures.optJSONArray("matches") ?: JSONArray())
-        val parts = mutableListOf<String>()
-        if (memoryText.isNotBlank()) parts.add("## Relevant Memory\n$memoryText")
-        if (procedureText.isNotBlank()) parts.add("## Relevant Procedure\n$procedureText")
-        if (experienceText.isNotBlank()) parts.add("## Relevant Experience\n$experienceText")
-        val content = parts.joinToString("\n\n").take(6000)
+        val memoryItems = memory.optJSONArray("matches") ?: JSONArray()
+        val procedureItems = procedures.optJSONArray("matches") ?: JSONArray()
+        val experienceItems = exp.optJSONArray("matches") ?: JSONArray()
+        val content = buildString {
+            append("## Relevant Memory\n")
+            append(formatMemory(memoryItems))
+            append("\n\n## Relevant Procedure\n")
+            append(formatProcedures(procedureItems))
+            append("\n\n## Relevant Experience\n")
+            append(formatExperience(experienceItems))
+        }
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+            .take(6000)
         return JSONObject()
             .put("ok", true)
             .put("injected", content.isNotBlank())
             .put("content", content)
-            .put("memory_count", memory.optInt("count", 0))
-            .put("procedure_count", procedures.optInt("count", 0))
-            .put("experience_count", exp.optInt("count", 0))
-            .put("memory", memory.optJSONArray("matches") ?: JSONArray())
-            .put("procedures", procedures.optJSONArray("matches") ?: JSONArray())
-            .put("experience", exp.optJSONArray("matches") ?: JSONArray())
+            .put("memory_count", memoryItems.length())
+            .put("procedure_count", procedureItems.length())
+            .put("experience_count", experienceItems.length())
+            .put("memory", memoryItems)
+            .put("procedures", procedureItems)
+            .put("experience", experienceItems)
     }
 
     fun procedureList(arguments: JSONObject): JSONObject {
@@ -696,15 +702,17 @@ class MobileMemoryStore(context: Context) {
     }
 
     private fun formatMemory(items: JSONArray): String {
+        if (items.length() == 0) return "- none"
         val lines = mutableListOf<String>()
         for (index in 0 until items.length()) {
             val item = items.optJSONObject(index) ?: continue
-            lines.add("- ${item.optString("text").ifBlank { readableMemoryItem(item) }.take(500)}")
+            lines.add("${index + 1}. ${item.optString("text").ifBlank { readableMemoryItem(item) }.take(360)}")
         }
         return lines.joinToString("\n")
     }
 
     private fun formatExperience(items: JSONArray): String {
+        if (items.length() == 0) return "- none"
         val lines = mutableListOf<String>()
         for (index in 0 until items.length()) {
             val item = items.optJSONObject(index) ?: continue
@@ -716,16 +724,17 @@ class MobileMemoryStore(context: Context) {
                 else -> "note"
             }
             val scope = listOf(item.optString("app"), item.optString("tool_scope")).filter { it.isNotBlank() }.joinToString("/")
-            lines.add("- [$prefix${if (scope.isNotBlank()) " $scope" else ""}] ${item.optString("description").take(700)}")
+            lines.add("${index + 1}. [$prefix${if (scope.isNotBlank()) " $scope" else ""}] ${item.optString("description").take(420)}")
         }
         return lines.joinToString("\n")
     }
 
     private fun formatProcedures(items: JSONArray): String {
+        if (items.length() == 0) return "- none"
         val lines = mutableListOf<String>()
         for (index in 0 until items.length()) {
             val item = items.optJSONObject(index) ?: continue
-            lines.add("- [procedure ${item.optString("scope_key")}] ${item.optString("preview").take(700)}")
+            lines.add("${index + 1}. [procedure ${item.optString("scope_key")}] ${item.optString("preview").take(420)}")
         }
         return lines.joinToString("\n")
     }
