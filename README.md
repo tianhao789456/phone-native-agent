@@ -1,6 +1,5 @@
 # Mobile Agent
 
-[![CI](https://github.com/tianhao789456/phone-native-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/tianhao789456/phone-native-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A phone-resident AI agent prototype. Mobile Agent runs the agent loop, tools, task traces, plugin workflow, and Android host bridge close to the phone instead of treating the phone as a passive ADB target.

@@ -186,7 +186,7 @@ class NativeAgentCore(private val context: Context) {
         if (runtimeConfig.terminalEnabled() && terminalBefore.optString("status") != "ok") {
             recovery = recoverTerminalBackend(
                 JSONObject()
-                    .put("use_run_command", true)
+                    .put("use_run_command", false)
                     .put("open_termux", true)
                     .put("wait_ms", 3000)
             )
@@ -1225,6 +1225,7 @@ class NativeAgentCore(private val context: Context) {
         val verification = output.optJSONObject("verification")
         return when {
             verification?.optBoolean("required", false) == true && !verification.optBoolean("ok", false) -> "failed"
+            result?.has("healthy") == true && output.optBoolean("ok", false) -> "success"
             result?.has("ok") == true && !result.optBoolean("ok", true) -> "failed"
             result?.has("available") == true && !result.optBoolean("available", true) -> "failed"
             output.optBoolean("ok", false) -> "success"
@@ -1449,7 +1450,7 @@ class NativeAgentCore(private val context: Context) {
         } else {
             recoverTerminalBackend(
                 JSONObject()
-                    .put("use_run_command", true)
+                    .put("use_run_command", false)
                     .put("open_termux", false)
                     .put("wait_ms", 2500)
             )
@@ -1605,7 +1606,7 @@ class NativeAgentCore(private val context: Context) {
         if (diagnosis.optString("status") != "ok") {
             val repaired = recoverTerminalBackend(
                 JSONObject()
-                    .put("use_run_command", true)
+                    .put("use_run_command", false)
                     .put("open_termux", false)
                     .put("wait_ms", 2500)
             )
@@ -2383,7 +2384,7 @@ class NativeAgentCore(private val context: Context) {
                     "recover_terminal_backend",
                     "Try to recover the optional Termux terminal backend. It enables the local terminal endpoint, optionally opens Termux, and tries Termux RUN_COMMAND to start scripts/start-http-termux.sh. Requires danger mode and user confirmation.",
                     JSONObject()
-                        .put("use_run_command", JSONObject().put("type", "boolean").put("default", true))
+                        .put("use_run_command", JSONObject().put("type", "boolean").put("default", false))
                         .put("open_termux", JSONObject().put("type", "boolean").put("default", true))
                         .put("wait_ms", JSONObject().put("type", "integer").put("default", 2500))
                 )
@@ -2747,7 +2748,7 @@ class NativeAgentCore(private val context: Context) {
             cacheTerminalRuntime(JSONObject(runtime.toString()).put("state", "recovering"))
             val recovery = recoverTerminalBackend(
                 JSONObject()
-                    .put("use_run_command", true)
+                    .put("use_run_command", false)
                     .put("open_termux", false)
                     .put("wait_ms", 2500)
             )
@@ -2813,7 +2814,8 @@ class NativeAgentCore(private val context: Context) {
         if (!accessibility.optBoolean("connected", false)) issues.put("accessibility_not_connected")
         if (terminalDiagnosis.optString("status") != "ok") issues.put("terminal_${terminalDiagnosis.optString("status")}")
         return JSONObject()
-            .put("ok", issues.length() == 0)
+            .put("ok", true)
+            .put("healthy", issues.length() == 0)
             .put("runtime", "android-native")
             .put("model", profile.MODEL)
             .put("api_key_set", !apiKey().isNullOrBlank())
@@ -3734,10 +3736,10 @@ print(json.dumps({
             "terminal",
             "recover terminal backend requested",
             JSONObject()
-                .put("use_run_command", arguments.optBoolean("use_run_command", true))
+                .put("use_run_command", arguments.optBoolean("use_run_command", false))
                 .put("open_termux", arguments.optBoolean("open_termux", true))
         )
-        val useRunCommand = arguments.optBoolean("use_run_command", true)
+        val useRunCommand = arguments.optBoolean("use_run_command", false)
         val openTermux = arguments.optBoolean("open_termux", true)
         val waitMs = arguments.optInt("wait_ms", 2500).coerceIn(500, 10000)
         runtimeConfig.setTerminalConfig(true, AgentRuntimeConfig.DEFAULT_TERMINAL_BASE_URL)
@@ -3745,6 +3747,15 @@ print(json.dumps({
         val before = diagnoseTerminal()
         val actions = JSONArray().put("enabled_terminal_config")
         val errors = JSONArray()
+        if (before.optString("status") == "ok") {
+            return JSONObject()
+                .put("ok", true)
+                .put("before", before)
+                .put("after", before)
+                .put("actions", actions.put("skipped_recovery_backend_already_ok"))
+                .put("errors", errors)
+                .put("note", "Terminal backend is already reachable; skipped Termux RUN_COMMAND to avoid duplicate error notifications.")
+        }
 
         if (useRunCommand) {
             val started = runCatching { startTermuxHttpWithRunCommand() }
@@ -3761,13 +3772,18 @@ print(json.dumps({
 
         Thread.sleep(waitMs.toLong())
         val after = diagnoseTerminal()
+        val note = if (useRunCommand) {
+            "RUN_COMMAND was requested explicitly. If Termux rejects it, enable allow-external-apps=true and restart Termux."
+        } else {
+            "RUN_COMMAND is disabled by default; recovery only opened Termux and rechecked the HTTP backend."
+        }
         return JSONObject()
             .put("ok", after.optString("status") == "ok")
             .put("before", before)
             .put("after", after)
             .put("actions", actions)
             .put("errors", errors)
-            .put("note", "如果 RUN_COMMAND 被 Termux 拒绝，需要在 Termux 配置 allow-external-apps=true 后重启 Termux。")
+            .put("note", note)
     }
 
     private fun startTermuxHttpWithRunCommand() {
@@ -3779,10 +3795,10 @@ print(json.dumps({
                 "com.termux.RUN_COMMAND_ARGUMENTS",
                 arrayOf(
                     "-lc",
-                    "cd /sdcard/Download/mobile-agent && sh scripts/start-http-termux.sh"
+                    "cd /sdcard/Download/mobile-agent 2>/dev/null && sh scripts/start-http-termux.sh"
                 )
             )
-            .putExtra("com.termux.RUN_COMMAND_WORKDIR", "/sdcard/Download/mobile-agent")
+            .putExtra("com.termux.RUN_COMMAND_WORKDIR", "/data/data/com.termux/files/home")
             .putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
             .putExtra("com.termux.RUN_COMMAND_SESSION_ACTION", "0")
         context.startService(intent)

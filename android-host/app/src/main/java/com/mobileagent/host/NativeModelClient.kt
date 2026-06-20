@@ -16,11 +16,23 @@ class NativeModelClient(
     private val saveUsage: (JSONObject) -> Unit
 ) {
     fun request(apiKey: String, messages: JSONArray, enabledTools: Set<String>): NativeModelResponse {
+        val requestMessages = fitMessagesToBudget(trimMessages(messages, profile.MESSAGE_TRIM_LIMIT))
+        val requestStats = messageStats(requestMessages)
         val payload = JSONObject()
             .put("model", profile.MODEL)
-            .put("messages", trimMessages(messages, profile.MESSAGE_TRIM_LIMIT))
+            .put("messages", requestMessages)
             .put("tools", NativeToolRegistry.schemasForTools(enabledTools))
             .put("tool_choice", "auto")
+        log(
+            "info",
+            "api",
+            "prepared model request",
+            JSONObject()
+                .put("messages", requestMessages.length())
+                .put("estimated_tokens", requestStats.optInt("estimated_tokens"))
+                .put("chars", requestStats.optInt("chars"))
+                .put("budget_tokens", REQUEST_TOKEN_BUDGET)
+        )
         val response = postJson("${profile.BASE_URL}/chat/completions", payload, apiKey)
         val usage = response.optJSONObject("usage") ?: JSONObject()
         saveUsage(usage)
@@ -154,9 +166,124 @@ class NativeModelClient(
         return trimmed
     }
 
+    private fun fitMessagesToBudget(messages: JSONArray): JSONArray {
+        var bounded = sanitizeMessages(messages)
+        while (estimatedTokens(bounded) > REQUEST_TOKEN_BUDGET && bounded.length() > MIN_REQUEST_MESSAGES) {
+            bounded = dropOldestHistoryMessage(bounded)
+        }
+        return bounded
+    }
+
+    private fun sanitizeMessages(messages: JSONArray): JSONArray {
+        val sanitized = JSONArray()
+        for (index in 0 until messages.length()) {
+            val item = messages.optJSONObject(index) ?: continue
+            sanitized.put(sanitizeMessage(item, isLatest = index == messages.length() - 1))
+        }
+        return sanitized
+    }
+
+    private fun sanitizeMessage(item: JSONObject, isLatest: Boolean): JSONObject {
+        val copy = JSONObject(item.toString())
+        val role = copy.optString("role")
+        val maxContentChars = when {
+            role == "system" -> MAX_SYSTEM_CONTENT_CHARS
+            role == "user" && isLatest -> MAX_LATEST_USER_CONTENT_CHARS
+            role == "user" -> MAX_USER_CONTENT_CHARS
+            role == "tool" -> MAX_TOOL_CONTENT_CHARS
+            else -> MAX_ASSISTANT_CONTENT_CHARS
+        }
+        if (copy.has("content")) {
+            copy.put("content", truncateWithNotice(copy.optString("content", ""), maxContentChars))
+        }
+        val toolCalls = copy.optJSONArray("tool_calls")
+        if (toolCalls != null) {
+            val trimmedCalls = JSONArray()
+            for (index in 0 until toolCalls.length()) {
+                val call = JSONObject(toolCalls.optJSONObject(index)?.toString() ?: "{}")
+                val function = call.optJSONObject("function")
+                if (function != null && function.has("arguments")) {
+                    function.put(
+                        "arguments",
+                        truncateWithNotice(function.optString("arguments", ""), MAX_TOOL_ARGUMENT_CHARS)
+                    )
+                }
+                trimmedCalls.put(call)
+            }
+            copy.put("tool_calls", trimmedCalls)
+        }
+        return copy
+    }
+
+    private fun dropOldestHistoryMessage(messages: JSONArray): JSONArray {
+        val keepFirstSystem = messages.optJSONObject(0)?.optString("role") == "system"
+        val start = if (keepFirstSystem) 1 else 0
+        var dropStart = start
+        while (dropStart < messages.length() - 1 && messages.optJSONObject(dropStart)?.optString("role") == "tool") {
+            dropStart += 1
+        }
+        val dropIndexes = mutableSetOf(dropStart)
+        val item = messages.optJSONObject(dropStart)
+        val toolCalls = item?.optJSONArray("tool_calls")
+        if (item?.optString("role") == "assistant" && toolCalls != null && toolCalls.length() > 0) {
+            for (offset in 1..toolCalls.length()) {
+                val toolIndex = dropStart + offset
+                if (toolIndex < messages.length() && messages.optJSONObject(toolIndex)?.optString("role") == "tool") {
+                    dropIndexes.add(toolIndex)
+                }
+            }
+        }
+        val next = JSONArray()
+        for (index in 0 until messages.length()) {
+            if (index in dropIndexes) continue
+            next.put(messages.getJSONObject(index))
+        }
+        return next
+    }
+
+    private fun truncateWithNotice(value: String, maxChars: Int): String {
+        if (value.length <= maxChars) return value
+        val head = (maxChars * 2 / 3).coerceAtLeast(0)
+        val tail = (maxChars - head - 160).coerceAtLeast(0)
+        return value.take(head) +
+            "\n\n[... Mobile Agent truncated this historical message before sending it to the model: original_chars=${value.length}, kept_chars=$maxChars ...]\n\n" +
+            value.takeLast(tail)
+    }
+
+    private fun messageStats(messages: JSONArray): JSONObject {
+        var chars = 0
+        for (index in 0 until messages.length()) {
+            chars += messages.optJSONObject(index)?.toString()?.length ?: 0
+        }
+        return JSONObject()
+            .put("messages", messages.length())
+            .put("chars", chars)
+            .put("estimated_tokens", estimateTokens(chars))
+    }
+
+    private fun estimatedTokens(messages: JSONArray): Int {
+        var chars = 0
+        for (index in 0 until messages.length()) {
+            chars += messages.optJSONObject(index)?.toString()?.length ?: 0
+        }
+        return estimateTokens(chars)
+    }
+
+    private fun estimateTokens(chars: Int): Int {
+        return (chars / 4).coerceAtLeast(1)
+    }
+
     private class ApiHttpException(val statusCode: Int, message: String) : IOException("HTTP $statusCode: $message")
 
     companion object {
         private const val API_MAX_ATTEMPTS = 3
+        private const val REQUEST_TOKEN_BUDGET = 800_000
+        private const val MIN_REQUEST_MESSAGES = 6
+        private const val MAX_SYSTEM_CONTENT_CHARS = 30_000
+        private const val MAX_LATEST_USER_CONTENT_CHARS = 30_000
+        private const val MAX_USER_CONTENT_CHARS = 12_000
+        private const val MAX_ASSISTANT_CONTENT_CHARS = 12_000
+        private const val MAX_TOOL_CONTENT_CHARS = 8_000
+        private const val MAX_TOOL_ARGUMENT_CHARS = 4_000
     }
 }

@@ -364,7 +364,7 @@ object NativeToolRegistry {
             category = "recovery",
             access = NativeToolAccess.TERMINAL_DELEGATION,
             risk = NativeToolRisk.HIGH,
-            properties = props("use_run_command" to boolProp(true), "open_termux" to boolProp(true), "wait_ms" to intProp(2500)),
+            properties = props("use_run_command" to boolProp(false), "open_termux" to boolProp(true), "wait_ms" to intProp(2500)),
             autoRecover = true
         ),
         NativeToolDescriptor(
