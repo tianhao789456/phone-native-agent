@@ -1,12 +1,18 @@
 # Mobile Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/tianhao789456/phone-native-agent)](https://github.com/tianhao789456/phone-native-agent/releases/latest)
 
-A phone-resident AI agent prototype. Mobile Agent runs the agent loop, tools, task traces, plugin workflow, and Android host bridge close to the phone instead of treating the phone as a passive ADB target.
+A phone-resident AI agent prototype. It runs the agent loop, tools, task traces, plugin workflow, and Android host bridge close to the phone instead of treating the phone as a passive ADB target.
 
-The current project is experimental, but it is already more than a demo: it has a Kotlin Android Host App, a Python CLI/HTTP runtime, persistent sessions, Android screen/action tools, plugin reports, task workspaces, and a Plan-Act-Verify-Retry loop.
+The current project is experimental, but it is already more than a demo: it has a Kotlin Android Host App, a Python CLI/HTTP runtime, persistent sessions, Android screen/action tools, plugin reports, task workspaces, and a Plan / Act / Verify / Retry loop.
 
 ![Mobile Agent Android host](docs/assets/mobile-agent-home.png)
+
+Release assets and the repository preview image are available from the latest release:
+
+- [v0.1.0 release](https://github.com/tianhao789456/phone-native-agent/releases/tag/v0.1.0)
+- [Social preview asset](docs/assets/github-social-preview.png)
 
 ## Why This Exists
 
