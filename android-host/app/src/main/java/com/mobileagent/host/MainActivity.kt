@@ -1508,7 +1508,10 @@ class MainActivity : Activity() {
         val sessionUsage = usage?.optJSONObject("session")
         val sessionHit = sessionUsage?.optLong("prompt_cache_hit_tokens", 0L) ?: 0L
         val sessionMiss = sessionUsage?.optLong("prompt_cache_miss_tokens", 0L) ?: 0L
-        val cache = "\u672c\u6b21 ${cacheSummary(latestHit, latestMiss)} | \u4f1a\u8bdd\u5747\u503c ${cacheSummary(sessionHit, sessionMiss)}"
+        val cache = listOf(
+            cacheSummary(latestHit, latestMiss, "\u672c\u6b21"),
+            cacheSummary(sessionHit, sessionMiss, "\u4f1a\u8bdd")
+        ).filter { it.isNotBlank() }.joinToString(" | ")
         val terminalLabel = terminalRuntimeLabel(status.optJSONObject("terminal_runtime"), status.optJSONObject("terminal"))
         val mcpLabel = mcpRuntimeLabel(status.optJSONObject("mcp_runtime"), status.optJSONObject("mcp"))
         val rawContextText = if (window > 0 && !usedPercent.isNaN()) {
@@ -1570,11 +1573,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun cacheSummary(hit: Long, miss: Long): String {
+    private fun cacheSummary(hit: Long, miss: Long, label: String): String {
         val total = hit + miss
-        if (total <= 0L) return "-"
+        if (total <= 0L) return "$label -"
         val rate = hit.toDouble() / total.toDouble()
-        return "${(rate * 100).toInt()}% \u547d\u4e2d${formatTokenK(hit)}/\u8f93\u5165${formatTokenK(total)}"
+        return "$label ${(rate * 100).toInt()}% \u547d\u4e2d ${formatTokenK(hit)}/${formatTokenK(total)}"
     }
 
     private fun permissionLabel(mode: String): String {
@@ -1809,7 +1812,8 @@ class MainActivity : Activity() {
         val step = item.optInt("step", fallbackStep)
         lines.add("工具 #$step ${item.optString("tool", "tool")}")
         lines.add("状态: ${item.optString("state", "-")} | 耗时: ${item.optLong("duration_ms", 0)}ms")
-        lines.add("参数:\n${formatJsonPreview(item.optJSONObject("arguments") ?: JSONObject(), 1200)}")
+        lines.add("调用参数:\n${formatJsonPreview(item.optJSONObject("arguments") ?: JSONObject(), 1200)}")
+        toolResultSummary(output, result)?.let { lines.add("结果: $it") }
         output.optString("error", "").takeIf { it.isNotBlank() }?.let { lines.add("错误: $it") }
         output.optJSONObject("verification")?.let { verification ->
             lines.add(
@@ -1832,6 +1836,20 @@ class MainActivity : Activity() {
             lines.add("结果摘要:\n${formatJsonPreview(result, 1600)}")
         }
         return lines.joinToString("\n")
+    }
+
+    private fun toolResultSummary(output: JSONObject, result: JSONObject): String? {
+        val parts = mutableListOf<String>()
+        if (result.has("ok")) parts.add("ok=${result.optBoolean("ok", false)}")
+        result.optString("status", "").takeIf { it.isNotBlank() }?.let { parts.add("status=$it") }
+        result.optString("message", "").takeIf { it.isNotBlank() }?.let { parts.add("message=${it.take(180)}") }
+        result.optInt("returncode", Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE }?.let { parts.add("returncode=$it") }
+        result.optBoolean("timed_out", false).takeIf { it }?.let { parts.add("timed_out=true") }
+        result.optString("summary", "").takeIf { it.isNotBlank() }?.let { parts.add("summary=${it.take(220)}") }
+        if (parts.isEmpty()) {
+            output.optBoolean("ok", false).takeIf { it }?.let { parts.add("ok=true") }
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" | ")
     }
 
     private fun formatRecoverySummary(recovery: JSONObject): String {

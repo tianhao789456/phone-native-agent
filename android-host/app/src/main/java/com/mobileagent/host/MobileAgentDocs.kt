@@ -103,6 +103,7 @@ object MobileAgentDocs {
             "mcp.md" to mcp(),
             "memory.md" to memory(),
             "memory-v2.md" to memoryV2(),
+            "skills.md" to skills(),
             "task-loop-v2.md" to taskLoopV2(),
             "troubleshooting.md" to troubleshooting()
         )
@@ -421,6 +422,49 @@ object MobileAgentDocs {
             ## Relevant Experience
             ...
             ```
+        """.trimIndent()
+    }
+
+    private fun skills(): String {
+        return """
+            # Mobile Agent Skills
+
+            Skills are the project-level way to package reusable behavior for repeated tasks.
+            This repository does not need a separate heavyweight plugin runtime for the first useful version.
+            It already has the core building blocks:
+
+            - Procedure: reusable playbooks generated from experience and memory.
+            - Experience: durable execution lessons.
+            - Learning Mode: lightweight traces that can produce new procedures or lessons.
+            - MCP bridge: a remote tool layer for Windows or other desktop servers.
+
+            ## Recommended skill shape
+
+            A skill should be:
+
+            - Task scoped
+            - Tool aware
+            - Readable by the model in a short fixed prefix
+            - Backed by evidence or procedures, not only prose
+            - Small enough to keep cache-friendly
+
+            ## Good examples
+
+            - Order food
+            - Send a message
+            - Search a file
+            - Start a desktop task through MCP
+            - Repeat a known phone workflow
+
+            ## Agent order
+
+            When a skill exists for the task, search Procedure first, then Experience, then UserMemory, then execute one step at a time and verify.
+            When no skill exists, create one from the successful trace and keep it short.
+
+            ## Why this matters
+
+            Skills are how Mobile Agent grows without stuffing every past task into the live prompt.
+            They are also the cleanest place to document "how to do this again next time" for high-frequency workflows.
         """.trimIndent()
     }
 
