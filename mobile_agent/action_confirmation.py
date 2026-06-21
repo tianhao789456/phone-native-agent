@@ -10,6 +10,7 @@ ACTION_TOOLS = {
     "host_click_text",
     "host_click_view_id",
     "host_click_index",
+    "host_press_key",
     "host_input_text",
     "host_back",
     "host_home",

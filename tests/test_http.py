@@ -56,6 +56,12 @@ class HttpTests(unittest.TestCase):
 
                 chat = self._json_post(f"{base}/chat", {"message": "what time is it?"})
                 self.assertEqual(chat["tool_trace"][0]["tool"], "get_time")
+
+                self_test = self._json_get(f"{base}/self-test")
+                self.assertIn("status", self_test)
+                self.assertIn("checks", self_test)
+                self.assertIn("summary", self_test)
+                self.assertIn("session_store", [check["name"] for check in self_test["checks"]])
             finally:
                 server.shutdown()
                 server.server_close()

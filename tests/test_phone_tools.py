@@ -200,14 +200,14 @@ class PhoneToolTests(unittest.TestCase):
             calls[4],
             ("workspace.search", {"query": "hello", "path": "notes", "max_matches": 3, "max_bytes_per_file": 200000}),
         )
-        self.assertEqual(calls[5], ("accessibility.observe", {"max_nodes": 7}))
-        self.assertEqual(calls[6], ("accessibility.dump", {"max_nodes": 5}))
+        self.assertEqual(calls[5], ("accessibility_snapshot_v2", {"max_nodes": 7}))
+        self.assertEqual(calls[6], ("accessibility_snapshot_v2", {"max_nodes": 5}))
         self.assertEqual(calls[7], ("accessibility.find", {"query": "OK", "contains": False, "max_nodes": 2}))
         self.assertEqual(calls[8], ("accessibility.current_app", {}))
         self.assertEqual(calls[9], ("accessibility.click_text", {"text": "OK", "contains": False}))
         self.assertEqual(calls[10], ("accessibility.click_index", {"index": 3}))
         self.assertEqual(calls[11], ("accessibility.input_text", {"text": "hello"}))
-        self.assertEqual(calls[12], ("accessibility.back", {}))
+        self.assertEqual(calls[12], ("host_press_key", {"key": "back"}))
 
 
 if __name__ == "__main__":

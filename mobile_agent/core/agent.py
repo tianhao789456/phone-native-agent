@@ -6,9 +6,12 @@ import uuid
 from typing import Any, Callable
 
 from mobile_agent.action_confirmation import action_approval, is_action_tool
+from .agent_protocol import build_initial_messages, build_protocol_messages, tool_call_messages, tool_output_messages
 from .llm import LlmClient
-from .store import ConversationStore, Session
+from .store import ConversationStore
 from .tools import ToolRegistry, dumps_tool_result
+from .tool_loading import ToolLoadState
+from .self_test import run_agent_self_test
 from .context import build_compaction_prompt, compact_messages, context_stats
 
 
@@ -39,16 +42,19 @@ class Agent:
             session.messages.append({"role": "system", "content": self.config.system_prompt})
         session.messages.append({"role": "user", "content": message})
 
-        if self.llm.uses_previous_response_id and session.previous_response_id:
-            prompt_messages = [{"role": "user", "content": message}]
-        else:
-            prompt_messages = self._history_messages(session.messages)
+        prompt_messages = build_initial_messages(
+            session.messages,
+            use_previous_response_context=self.llm.uses_previous_response_id,
+            previous_response_id=session.previous_response_id,
+            current_message=message,
+        )
+        tool_load_state = ToolLoadState()
 
         model_started = time.time()
         result = self.llm.respond(
             model=self.config.model,
             messages=prompt_messages[-30:],
-            tools=self.tools.openai_tools(),
+            tools=tool_load_state.model_tools(self.tools),
             previous_response_id=session.previous_response_id,
         )
         spans: list[dict[str, Any]] = [
@@ -68,20 +74,10 @@ class Agent:
         rounds = 0
         while result.tool_calls and rounds < self.config.max_tool_rounds:
             rounds += 1
-            assistant_tool_calls = [
-                {
-                    "id": call.call_id,
-                    "type": "function",
-                    "function": {
-                        "name": call.name,
-                        "arguments": dumps_tool_result(call.arguments),
-                    },
-                }
-                for call in result.tool_calls
-            ]
+            assistant_tool_calls = tool_call_messages(result.tool_calls)
             if not self.llm.uses_previous_response_id:
                 session.messages.append({"role": "assistant", "content": result.text or "", "tool_calls": assistant_tool_calls})
-            tool_outputs = []
+            tool_outputs: list[dict[str, Any]] = []
             for call in result.tool_calls:
                 tool_started = time.time()
                 approved = self._confirm_tool_action(call.name, call.arguments, confirm_action)
@@ -101,6 +97,7 @@ class Agent:
                     "output": output,
                     "created_at": tool_started,
                 }
+                tool_load_state.record_tool_result(name=call.name, arguments=call.arguments, output=output, registry=self.tools)
                 trace.append(event)
                 spans.append(
                     {
@@ -121,13 +118,7 @@ class Agent:
                         "content": dumps_tool_result(output),
                     }
                 )
-                tool_outputs.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": call.call_id,
-                        "output": dumps_tool_result(output),
-                    }
-                )
+                tool_outputs.append({"call_id": call.call_id, "output": output})
             if not result.response_id:
                 break
             if self.llm.uses_previous_response_id:
@@ -135,15 +126,15 @@ class Agent:
                 result = self.llm.continue_with_tool_results(
                     model=self.config.model,
                     previous_response_id=result.response_id,
-                    tool_results=tool_outputs,
-                    tools=self.tools.openai_tools(),
+                    tool_results=tool_output_messages(tool_outputs),
+                    tools=tool_load_state.model_tools(self.tools),
                 )
             else:
                 model_started = time.time()
                 result = self.llm.respond(
                     model=self.config.model,
-                    messages=self._protocol_messages(session.messages, limit=30),
-                    tools=self.tools.openai_tools(),
+                    messages=build_protocol_messages(session.messages, limit=30),
+                    tools=tool_load_state.model_tools(self.tools),
                 )
             spans.append(
                 {
@@ -222,6 +213,9 @@ class Agent:
         self.store.save(session)
         return {"session_id": session.id, "compacted": True, "before": before, "after": after}
 
+    def run_self_test(self, *, include_host_bridge_check: bool = False) -> dict[str, Any]:
+        return run_agent_self_test(agent=self, include_host_bridge_check=include_host_bridge_check)
+
     def _confirm_tool_action(
         self,
         name: str,
@@ -233,53 +227,3 @@ class Agent:
         if confirm_action is None:
             return None
         return bool(confirm_action(name, arguments))
-
-    def _history_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        cleaned = []
-        for message in messages:
-            role = message.get("role")
-            content = str(message.get("content", ""))
-            if role in {"system", "user"}:
-                cleaned.append({"role": role, "content": content})
-            elif role == "assistant":
-                cleaned.append({"role": "assistant", "content": content})
-            elif role == "tool":
-                name = message.get("name") or "tool"
-                cleaned.append({"role": "assistant", "content": f"Previous {name} result: {content}"})
-        return cleaned[-30:]
-
-    def _protocol_messages(self, messages: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
-        cleaned = []
-        pending_tool_calls: set[str] = set()
-        for message in messages:
-            role = message.get("role")
-            if role == "assistant" and message.get("tool_calls"):
-                item = {key: value for key, value in message.items() if key in {"role", "content", "tool_calls"}}
-                cleaned.append(item)
-                pending_tool_calls = {
-                    str(call.get("id"))
-                    for call in message.get("tool_calls", [])
-                    if isinstance(call, dict) and call.get("id")
-                }
-            elif role == "tool":
-                tool_call_id = str(message.get("tool_call_id") or "")
-                if tool_call_id and tool_call_id in pending_tool_calls:
-                    cleaned.append(
-                        {
-                            key: value
-                            for key, value in message.items()
-                            if key in {"role", "content", "tool_call_id", "name"}
-                        }
-                    )
-                    pending_tool_calls.discard(tool_call_id)
-                else:
-                    name = message.get("name") or "tool"
-                    cleaned.append({"role": "assistant", "content": f"Previous {name} result: {message.get('content', '')}"})
-            elif role in {"system", "user", "assistant"}:
-                cleaned.append({"role": role, "content": str(message.get("content", ""))})
-                pending_tool_calls = set()
-
-        trimmed = cleaned[-limit:]
-        while trimmed and trimmed[0].get("role") == "tool":
-            trimmed.pop(0)
-        return trimmed

@@ -1,19 +1,29 @@
 from __future__ import annotations
 
+import io
 import unittest
+from contextlib import redirect_stdout
+from tempfile import TemporaryDirectory
+from pathlib import Path
 
 from mobile_agent.hosts.cli import (
     clean_console_input,
     expand_short_aliases,
     format_agent_message,
+    format_self_test,
     format_tool_event,
     format_tool_output,
+    print_self_test,
     summarize_tool_output,
     short_model,
     tui_footer,
     tui_status_line,
     tui_title,
 )
+from mobile_agent.core.agent import Agent, AgentConfig
+from mobile_agent.core.store import ConversationStore
+from mobile_agent.core.llm import MockLlmClient
+from mobile_agent.core.tools import ToolRegistry
 
 
 class CliTests(unittest.TestCase):
@@ -129,6 +139,35 @@ class CliTests(unittest.TestCase):
 
         self.assertIn("http_get", formatted)
         self.assertLess(len(formatted), 220)
+
+    def test_print_self_test_outputs_summary_and_checks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            agent = Agent(
+                config=AgentConfig(model="mock", system_prompt="test"),
+                llm=MockLlmClient(),
+                tools=ToolRegistry(),
+                store=ConversationStore(Path(tmp)),
+            )
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                print_self_test(agent=agent)
+        output = buffer.getvalue()
+        self.assertIn("self-test", output)
+        self.assertIn("session_store", output)
+        self.assertIn("tool_registry", output)
+
+    def test_format_self_test(self) -> None:
+        lines = format_self_test(
+            {
+                "status": "ok",
+                "summary": {"total": 1, "ok": 1, "warn": 0, "error": 0},
+                "checks": [{"name": "python_runtime", "status": "ok", "message": "python ok"}],
+                "recommendations": ["tip-1"],
+            }
+        )
+        self.assertTrue(lines[0].startswith("self-test status="))
+        self.assertIn("python_runtime", lines[1])
+        self.assertIn("tip-1", lines[-1])
 
 
 if __name__ == "__main__":

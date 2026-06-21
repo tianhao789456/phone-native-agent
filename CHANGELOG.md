@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0-alpha - 2026-06-22
+
+Architecture and runtime preview release.
+
+- Split the Android native runtime into focused controllers, dispatchers, catalogs, formatters, and recovery modules.
+- Added `accessibility_snapshot_v2`, Android intent/file action tools, and stronger structured phone UI observation.
+- Added formal progressive loading for native tools, plugins, skills, and MCP tools.
+- Added Skill registry and Skill tools for phone/PC workflows.
+- Expanded SSH/PC bridge recovery, file transfer, and terminal fallback paths.
+- Added multi-MCP desktop control integration primitives.
+- Added task stop/interruption and clearer terminal/MCP/SSH failure reporting.
+- Fixed Termux HTTP backend recovery by avoiding self-killing inline `pkill` commands and adding a Termux RUN_COMMAND setup script.
+- Rewrote README as clean Chinese-first documentation.
+- Expanded tests to cover the refactored runtime, progressive tools, terminal tasks, and source structure.
+
 ## 0.2.0-alpha - 2026-06-21
 
 Preview release for phone-led PC control and extensible tool loading.

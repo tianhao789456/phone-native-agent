@@ -1,12 +1,10 @@
 package com.mobileagent.host
 
 import com.jcraft.jsch.ChannelExec
-import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileOutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.Properties
@@ -29,6 +27,14 @@ class SshBridge(
         @Volatile private var forwardedRemoteHost: String = ""
         @Volatile private var forwardedRemotePort: Int = 0
     }
+
+    private val fileTransfer = SshBridgeFileTransfer(
+        workspace = workspace,
+        connectTimeoutMs = { runtimeConfig.sshConnectTimeoutMs() },
+        log = log,
+        fail = { message -> fail(message) },
+        setLastError = { message -> lastError = message }
+    )
 
     fun status(): org.json.JSONObject {
         synchronized(lock) {
@@ -83,7 +89,7 @@ class SshBridge(
                     jsch.addIdentity(identityFile.absolutePath, passphrase)
                 }
             }.getOrElse {
-                return fail("load identity failed: ${formatException(it)}")
+                return fail("load identity failed: ${SshBridgeDiagnostics.formatException(it)}")
             }
 
             val connected = runCatching {
@@ -94,7 +100,7 @@ class SshBridge(
                 sshSession
             }.getOrElse { exc ->
                 cleanupSessionLocked()
-                return fail("ssh connect failed: ${formatException(exc)}")
+                return fail("ssh connect failed: ${SshBridgeDiagnostics.formatException(exc)}")
             }
 
             session = connected
@@ -177,7 +183,7 @@ class SshBridge(
                     .put("status", "forwarding")
                     .put("forwarding", status)
             }.getOrElse {
-                fail("ssh local forwarding failed: ${formatException(it)}")
+                fail("ssh local forwarding failed: ${SshBridgeDiagnostics.formatException(it)}")
             }
         }
     }
@@ -222,7 +228,7 @@ class SshBridge(
                 }
             }
         } catch (exc: Exception) {
-            error = formatException(exc)
+            error = SshBridgeDiagnostics.formatException(exc)
         }
         val elapsedMs = System.currentTimeMillis() - startedAt
         val bannerOk = banner.startsWith("SSH-2.0")
@@ -243,7 +249,7 @@ class SshBridge(
             .put("ssh_banner_ok", bannerOk)
             .put("banner", banner)
             .put("error", error)
-            .put("hint", diagnoseHint(status))
+            .put("hint", SshBridgeDiagnostics.hint(status))
         log(
             if (ok) "info" else "warn",
             "ssh",
@@ -262,7 +268,7 @@ class SshBridge(
         val port = arguments.optInt("port", runtimeConfig.sshPort()).coerceIn(1, 65535)
         val timeoutMs = arguments.optInt("timeout_ms", 6_000).coerceIn(1_000, 30_000)
         val apply = arguments.optBoolean("apply", true)
-        val candidates = parseCandidateHosts(arguments)
+        val candidates = SshBridgeDiagnostics.parseCandidateHosts(arguments, runtimeConfig.sshHost())
         if (candidates.isEmpty()) return fail("ssh select host failed: candidates are required")
 
         val results = org.json.JSONArray()
@@ -321,13 +327,13 @@ class SshBridge(
             ensureSessionLocked() ?: return fail(lastError.ifBlank { "ssh is not connected" })
         }
 
-        val remoteCommand = buildRemoteCommand(command, cwd, shell)
+        val remoteCommand = SshBridgeCommandBuilder.build(command, cwd, shell)
         val stdout = ByteArrayOutputStream()
         val stderr = ByteArrayOutputStream()
         var returnCode = -1
         var timedOut = false
         val channel = runCatching { current.openChannel("exec") as ChannelExec }
-            .getOrElse { return fail("open exec channel failed: ${formatException(it)}") }
+            .getOrElse { return fail("open exec channel failed: ${SshBridgeDiagnostics.formatException(it)}") }
         try {
             channel.setCommand(remoteCommand)
             channel.setInputStream(null)
@@ -352,7 +358,7 @@ class SshBridge(
             timedOut = !channel.isClosed
             returnCode = if (timedOut) -1 else channel.exitStatus
         } catch (exc: Exception) {
-            lastError = "ssh command failed: ${formatException(exc)}"
+            lastError = "ssh command failed: ${SshBridgeDiagnostics.formatException(exc)}"
             return fail(lastError)
         } finally {
             runCatching { channel.disconnect() }
@@ -396,28 +402,7 @@ class SshBridge(
             if (localPath.isBlank() || remotePath.isBlank()) return fail("local_path and remote_path are required")
             ensureSessionLocked() ?: return fail(lastError.ifBlank { "ssh is not connected" })
         }
-        val localFile = workspace.resolvePath(localPath)
-        if (!localFile.exists() || !localFile.isFile) return fail("local file not found: $localPath")
-        val sftp = openSftp(current) ?: return fail(lastError.ifBlank { "open sftp channel failed" })
-        try {
-            ensureRemoteDirectory(sftp, remotePath)
-            if (!overwrite && remoteExists(sftp, remotePath)) return fail("remote file exists and overwrite is false: $remotePath")
-            sftp.put(localFile.absolutePath, remotePath, if (overwrite) ChannelSftp.OVERWRITE else ChannelSftp.RESUME)
-            val stat = runCatching { sftp.stat(remotePath) }.getOrNull()
-            val result = org.json.JSONObject()
-                .put("local_path", localFile.canonicalPath)
-                .put("remote_path", remotePath)
-                .put("bytes", localFile.length())
-                .put("overwrite", overwrite)
-                .put("remote_size", stat?.size ?: -1)
-            log("info", "ssh", "ssh file pushed", org.json.JSONObject().put("local_path", localFile.canonicalPath).put("remote_path", remotePath))
-            return org.json.JSONObject().put("ok", true).put("status", "ok").put("result", result)
-        } catch (exc: Exception) {
-            lastError = exc.message ?: exc.javaClass.simpleName
-            return fail("file push failed: ${formatException(exc)}")
-        } finally {
-            runCatching { sftp.disconnect() }
-        }
+        return fileTransfer.push(current, localPath, remotePath, overwrite)
     }
 
     fun pull(remotePath: String, localPath: String = "", overwrite: Boolean = true): org.json.JSONObject {
@@ -425,33 +410,7 @@ class SshBridge(
             if (remotePath.isBlank()) return fail("remote_path is required")
             ensureSessionLocked() ?: return fail(lastError.ifBlank { "ssh is not connected" })
         }
-        val sftp = openSftp(current) ?: return fail(lastError.ifBlank { "open sftp channel failed" })
-        try {
-            val targetPath = if (localPath.isBlank()) {
-                "workspace:/ssh/${remotePath.substringAfterLast('/', "download.txt")}"
-            } else {
-                localPath
-            }
-            val localFile = workspace.resolvePath(targetPath)
-            if (localFile.exists() && localFile.isFile && !overwrite) return fail("local file exists and overwrite is false: $targetPath")
-            localFile.parentFile?.mkdirs()
-            if (localFile.exists() && overwrite) runCatching { localFile.delete() }
-            FileOutputStream(localFile).use { output -> sftp.get(remotePath, output) }
-            val stat = runCatching { sftp.stat(remotePath) }.getOrNull()
-            val result = org.json.JSONObject()
-                .put("remote_path", remotePath)
-                .put("local_path", localFile.canonicalPath)
-                .put("bytes", localFile.length())
-                .put("overwrite", overwrite)
-                .put("remote_size", stat?.size ?: -1)
-            log("info", "ssh", "ssh file pulled", org.json.JSONObject().put("remote_path", remotePath).put("local_path", localFile.canonicalPath))
-            return org.json.JSONObject().put("ok", true).put("status", "ok").put("result", result)
-        } catch (exc: Exception) {
-            lastError = exc.message ?: exc.javaClass.simpleName
-            return fail("file pull failed: ${formatException(exc)}")
-        } finally {
-            runCatching { sftp.disconnect() }
-        }
+        return fileTransfer.pull(current, remotePath, localPath, overwrite)
     }
 
     private fun ensureSessionLocked(): Session? {
@@ -527,61 +486,6 @@ class SshBridge(
         return if (candidate.exists() && candidate.isFile) candidate else null
     }
 
-    private fun openSftp(session: Session): ChannelSftp? {
-        return runCatching {
-            (session.openChannel("sftp") as ChannelSftp).also { it.connect(runtimeConfig.sshConnectTimeoutMs()) }
-        }.onFailure {
-            lastError = "open sftp channel failed: ${formatException(it)}"
-        }.getOrNull()
-    }
-
-    private fun remoteExists(sftp: ChannelSftp, remotePath: String): Boolean {
-        return runCatching {
-            sftp.stat(remotePath)
-            true
-        }.getOrElse { false }
-    }
-
-    private fun ensureRemoteDirectory(sftp: ChannelSftp, remotePath: String) {
-        val normalized = remotePath.replace('\\', '/')
-        val parent = normalized.substringBeforeLast('/', "")
-        if (parent.isBlank()) return
-        var current = if (normalized.startsWith("/")) "/" else ""
-        parent.split('/').filter { it.isNotBlank() }.forEach { part ->
-            current = if (current.isBlank() || current == "/") "$current$part" else "$current/$part"
-            if (!remoteExists(sftp, current)) {
-                runCatching { sftp.mkdir(current) }
-            }
-        }
-    }
-
-    private fun buildRemoteCommand(command: String, cwd: String, shell: String): String {
-        val withCwd = if (cwd.isBlank()) {
-            command.trim()
-        } else {
-            when (shell.lowercase()) {
-                "powershell", "pwsh" -> "Set-Location -LiteralPath '${cwd.replace("'", "''")}'; ${command.trim()}"
-                "cmd" -> "cd /d \"${cwd.replace("\"", "\\\"")}\" && ${command.trim()}"
-                "bash", "sh" -> "cd -- '${cwd.replace("'", "'\"'\"'")}' && ${command.trim()}"
-                else -> "cd -- '${cwd.replace("'", "'\"'\"'")}' && ${command.trim()}"
-            }
-        }
-        return when (shell.lowercase()) {
-            "powershell", "pwsh" -> {
-                val script = "\$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $withCwd"
-                "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encodePowerShell(script)}"
-            }
-            "cmd" -> "cmd /d /s /c \"${withCwd.replace("\"", "\\\"")}\""
-            "bash" -> "bash -lc '${withCwd.replace("'", "'\"'\"'")}'"
-            "sh" -> "sh -lc '${withCwd.replace("'", "'\"'\"'")}'"
-            else -> withCwd
-        }
-    }
-
-    private fun encodePowerShell(script: String): String {
-        return java.util.Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_16LE))
-    }
-
     private fun fail(message: String): org.json.JSONObject {
         lastError = message
         log("error", "ssh", message, org.json.JSONObject())
@@ -592,44 +496,4 @@ class SshBridge(
             .put("result", org.json.JSONObject())
     }
 
-    private fun diagnoseHint(status: String): String {
-        return when (status) {
-            "ssh_banner_ok" -> "TCP and SSH banner are reachable. If ssh_connect still fails, check username, key, authorized_keys, and OpenSSH logs."
-            "tcp_connected_no_ssh_banner" -> "TCP connected but no SSH banner was read. Check Tailscale/VPN route, firewall interception, or whether the target port is really OpenSSH."
-            else -> "TCP connection failed. Check host address, network reachability, Tailscale/LAN connectivity, Windows firewall, and sshd service state."
-        }
-    }
-
-    private fun parseCandidateHosts(arguments: org.json.JSONObject): List<String> {
-        val values = linkedSetOf<String>()
-        val array = arguments.optJSONArray("hosts") ?: arguments.optJSONArray("candidates")
-        if (array != null) {
-            for (index in 0 until array.length()) {
-                array.optString(index).trim().takeIf { it.isNotBlank() }?.let { values.add(it) }
-            }
-        }
-        arguments.optString("host", "").split(',', ';', ' ', '\n', '\t')
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .forEach { values.add(it) }
-        runtimeConfig.sshHost().takeIf { it.isNotBlank() }?.let { values.add(it) }
-        return values.toList()
-    }
-
-    private fun formatException(exc: Throwable): String {
-        val cause = exc.cause
-        val rootCause = generateSequence(cause) { it.cause }.lastOrNull()
-        return buildString {
-            append(exc.javaClass.simpleName)
-            if (!exc.message.isNullOrBlank()) append(": ").append(exc.message)
-            if (cause != null && cause !== exc) {
-                append(" | cause=").append(cause.javaClass.simpleName)
-                if (!cause.message.isNullOrBlank()) append(": ").append(cause.message)
-            }
-            if (rootCause != null && rootCause !== cause) {
-                append(" | root=").append(rootCause.javaClass.simpleName)
-                if (!rootCause.message.isNullOrBlank()) append(": ").append(rootCause.message)
-            }
-        }
-    }
 }

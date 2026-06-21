@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mobile-agent"
-version = "0.1.0"
+version = "0.3.0a0"
 description = "Phone-resident mobile agent prototype with Android host tools and a managed task loop"
 requires-python = ">=3.10"
 dependencies = []

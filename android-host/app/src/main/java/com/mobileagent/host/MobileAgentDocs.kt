@@ -455,7 +455,7 @@ object MobileAgentDocs {
 
             当前插件是 manifest 工作流型插件，可以封装：
 
-            - 手机只读观察：`host_observe`、`host_screen_find`、`host_wait_for_text`
+            - 手机只读观察：`accessibility_snapshot_v2`、`host_screen_find`、`host_wait_for_text`
             - 手机动作：开发者模式下可通过正常权限门执行点击、输入、滑动等工具
             - 终端脚本：开发者模式下可封装 `terminal_run`、`terminal_script`
             - SSH 电脑控制：`ssh_status`、`ssh_connect`、`ssh_run`、`pc_file_workflow`
@@ -516,9 +516,9 @@ object MobileAgentDocs {
 
             手机 App 流程不要只写点击坐标。优先：
 
-            1. `host_observe` 看当前 App 和屏幕。
+            1. `accessibility_snapshot_v2` 看当前 App 和屏幕。
             2. `host_screen_find` 找文字、按钮、输入框。
-            3. 动作后用 `host_wait_for_text` 或再次 `host_observe` 验证。
+            3. 动作后用 `host_wait_for_text` 或再次 `accessibility_snapshot_v2` 验证。
             4. 失败时停止并报告，而不是反复点同一个位置。
 
             ## SSH/电脑任务插件建议
@@ -574,7 +574,7 @@ object MobileAgentDocs {
             ## Agent 规则
 
             1. 每个工具结果都要读 `task_loop_v2_instruction`。
-            2. 如果手机动作创建了待验证项，必须用 `after_observe`、`host_observe`、`host_wait_for_text` 或其他只读观察验证后，才能声称完成。
+            2. 如果手机动作创建了待验证项，必须用 `after_observe`、`accessibility_snapshot_v2`、`host_wait_for_text` 或其他只读观察验证后，才能声称完成。
             3. 工具失败时要改变参数或策略，不要盲目重复同一个失败调用。
             4. 如果 `completion_review.status=needs_attention`，先报告阻塞点或执行所需验证，不要直接说完成。
             5. 最终答复引用工具输出、验证字段、`task_loop.evidence`、任务报告或任务产物里的具体证据。

@@ -1,0 +1,15 @@
+package com.mobileagent.host
+
+import org.json.JSONObject
+
+object NativeTerminalToolCatalog {
+    val descriptors: List<NativeToolDescriptor> = listOf(
+        NativeToolDescriptor("termux_status", "Return whether the optional Termux terminal tool backend is configured and reachable.", "terminal", NativeToolAccess.READ_ONLY, NativeToolRisk.LOW, autoRecover = true),
+        NativeToolDescriptor("termux_tools", "List tools exposed by the optional Termux terminal backend.", "terminal", NativeToolAccess.READ_ONLY, NativeToolRisk.LOW, autoRecover = true),
+        NativeToolDescriptor("termux_chat", "Delegate a task to the optional Termux agent backend. Requires danger permission mode and user confirmation.", "terminal", NativeToolAccess.TERMINAL_DELEGATION, NativeToolRisk.HIGH, NativeToolSchema.props("message" to NativeToolSchema.stringProp()), NativeToolSchema.req("message"), autoRecover = true),
+        NativeToolDescriptor("terminal_run", "Run a shell command through the optional Termux terminal backend and return stdout, stderr, return code, cwd, and timeout status. Requires danger mode and user confirmation.", "terminal", NativeToolAccess.TERMINAL_DELEGATION, NativeToolRisk.HIGH, NativeToolSchema.props("command" to NativeToolSchema.stringProp(), "cwd" to NativeToolSchema.stringProp(""), "timeout" to NativeToolSchema.intProp(60)), NativeToolSchema.req("command"), autoRecover = true),
+        NativeToolDescriptor("terminal_script", "Write a temporary script into the Termux task workspace, run it, save full stdout/stderr/task metadata, and return folded output plus task id and artifact paths. Prefer this over terminal_run for multi-line scripts, tests, generated code, or tasks with large output. Requires danger mode and user confirmation.", "terminal", NativeToolAccess.TERMINAL_DELEGATION, NativeToolRisk.HIGH, NativeToolSchema.props("script" to NativeToolSchema.stringProp(), "interpreter" to NativeToolSchema.stringProp("sh"), "cwd" to NativeToolSchema.stringProp(""), "timeout" to NativeToolSchema.intProp(60), "wait" to NativeToolSchema.boolProp(true), "max_output_chars" to NativeToolSchema.intProp(12000), "name" to NativeToolSchema.stringProp("script")), NativeToolSchema.req("script"), autoRecover = true),
+        NativeToolDescriptor("terminal_task_status", "Read a saved or running Termux terminal task by task id. Use this after terminal_script with wait=false, or to inspect saved stdout/stderr artifacts. Requires danger mode and user confirmation.", "terminal", NativeToolAccess.TERMINAL_DELEGATION, NativeToolRisk.HIGH, NativeToolSchema.props("task_id" to NativeToolSchema.stringProp(), "max_output_chars" to NativeToolSchema.intProp(12000)), NativeToolSchema.req("task_id"), autoRecover = true),
+        NativeToolDescriptor("terminal_task_cancel", "Cancel a running Termux terminal task by task id. Use this to interrupt long-running background scripts. Requires danger mode and user confirmation.", "terminal", NativeToolAccess.TERMINAL_DELEGATION, NativeToolRisk.HIGH, NativeToolSchema.props("task_id" to NativeToolSchema.stringProp()), NativeToolSchema.req("task_id"), autoRecover = true)
+    )
+}

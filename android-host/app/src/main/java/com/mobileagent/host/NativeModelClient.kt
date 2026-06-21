@@ -7,6 +7,7 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
+import java.security.MessageDigest
 
 data class NativeModelResponse(val content: String, val toolCalls: JSONArray)
 
@@ -17,24 +18,37 @@ class NativeModelClient(
 ) {
     fun request(apiKey: String, messages: JSONArray, enabledTools: Set<String>): NativeModelResponse {
         val requestMessages = fitMessagesToBudget(trimMessages(messages))
+        val tools = NativeToolRegistry.schemasForTools(enabledTools)
         val requestStats = messageStats(requestMessages)
+        val toolSignature = stableHash(tools.toString())
         val payload = JSONObject()
             .put("model", profile.MODEL)
-            .put("messages", requestMessages)
-            .put("tools", NativeToolRegistry.schemasForTools(enabledTools))
+            .put("tools", tools)
             .put("tool_choice", "auto")
+            .put("messages", requestMessages)
         log(
             "info",
             "api",
             "prepared model request",
             JSONObject()
                 .put("messages", requestMessages.length())
+                .put("tools", tools.length())
+                .put("tool_schema_hash", toolSignature)
                 .put("estimated_tokens", requestStats.optInt("estimated_tokens"))
                 .put("chars", requestStats.optInt("chars"))
                 .put("budget_tokens", REQUEST_TOKEN_BUDGET)
         )
         val response = postJson("${profile.BASE_URL}/chat/completions", payload, apiKey)
         val usage = response.optJSONObject("usage") ?: JSONObject()
+        usage.put(
+            "mobile_agent_request",
+            JSONObject()
+                .put("message_count", requestMessages.length())
+                .put("tool_count", tools.length())
+                .put("tool_schema_hash", toolSignature)
+                .put("estimated_tokens", requestStats.optInt("estimated_tokens"))
+                .put("cache_prefix_policy", "stable_system_and_sorted_tools_before_dynamic_messages")
+        )
         saveUsage(usage)
         val choice = response.optJSONArray("choices")?.optJSONObject(0) ?: JSONObject()
         val message = choice.optJSONObject("message") ?: JSONObject()
@@ -271,6 +285,11 @@ class NativeModelClient(
 
     private fun estimateTokens(chars: Int): Int {
         return (chars / 4).coerceAtLeast(1)
+    }
+
+    private fun stableHash(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return digest.take(8).joinToString("") { "%02x".format(it) }
     }
 
     private class ApiHttpException(val statusCode: Int, message: String) : IOException("HTTP $statusCode: $message")
