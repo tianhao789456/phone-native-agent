@@ -614,6 +614,7 @@ class MobileMemoryStore(context: Context) {
             tool.startsWith("mcp_") -> "windows_mcp"
             tool.startsWith("host_") -> "phone"
             tool.startsWith("terminal") || tool.startsWith("termux") -> "termux"
+            tool.startsWith("ssh") || tool.startsWith("file_") -> "ssh"
             else -> return null
         }
         val type = if (state == "success") "successful_navigation" else "failed_approach"

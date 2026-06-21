@@ -18,18 +18,22 @@ class MobilePluginRegistry(private val context: Context) {
             .put("enabled", pluginDirs().count { readManifestOrNull(it)?.optBoolean("enabled", true) == true })
     }
 
-    fun list(includeDisabled: Boolean = true): JSONObject {
+    fun list(includeDisabled: Boolean = true, includeDetails: Boolean = false): JSONObject {
         ensureRoot()
         val plugins = JSONArray()
         pluginDirs()
             .mapNotNull { readManifestOrNull(it) }
             .filter { includeDisabled || it.optBoolean("enabled", true) }
             .sortedBy { it.optString("id") }
-            .forEach { plugins.put(it) }
+            .forEach { manifest ->
+                plugins.put(if (includeDetails) manifest else compactManifest(manifest))
+            }
         return JSONObject()
             .put("ok", true)
             .put("root", root.canonicalPath)
             .put("count", plugins.length())
+            .put("progressive_loading", true)
+            .put("detail_tool", "plugin_read")
             .put("plugins", plugins)
     }
 
@@ -217,6 +221,31 @@ class MobilePluginRegistry(private val context: Context) {
             .put("workflows", workflows)
             .put("created_at_ms", input.optLong("created_at_ms", now))
             .put("updated_at_ms", now)
+    }
+
+    private fun compactManifest(manifest: JSONObject): JSONObject {
+        val workflows = manifest.optJSONArray("workflows") ?: JSONArray()
+        val tools = manifest.optJSONArray("tools") ?: JSONArray()
+        val workflowIndex = JSONArray()
+        for (index in 0 until workflows.length()) {
+            val workflow = workflows.optJSONObject(index) ?: continue
+            workflowIndex.put(
+                JSONObject()
+                    .put("name", workflow.optString("name"))
+                    .put("description", workflow.optString("description"))
+                    .put("steps", workflow.optJSONArray("steps")?.length() ?: 0)
+            )
+        }
+        return JSONObject()
+            .put("id", manifest.optString("id"))
+            .put("name", manifest.optString("name"))
+            .put("version", manifest.optString("version"))
+            .put("description", manifest.optString("description"))
+            .put("enabled", manifest.optBoolean("enabled", true))
+            .put("tool_count", tools.length())
+            .put("workflow_count", workflows.length())
+            .put("workflows", workflowIndex)
+            .put("updated_at_ms", manifest.optLong("updated_at_ms"))
     }
 
     private fun validateManifest(manifest: JSONObject): JSONObject {

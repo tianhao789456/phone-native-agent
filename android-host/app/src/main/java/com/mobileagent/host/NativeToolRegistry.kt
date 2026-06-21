@@ -56,6 +56,16 @@ data class NativeToolDescriptor(
             .put("debug_hint", debugHint)
             .put("schema", schema().optJSONObject("function")?.optJSONObject("parameters") ?: JSONObject())
     }
+
+    fun indexMetadata(): JSONObject {
+        return JSONObject()
+            .put("name", name)
+            .put("description", description)
+            .put("category", category)
+            .put("access", access.name.lowercase())
+            .put("risk", risk.name.lowercase())
+            .put("auto_recover", autoRecover)
+    }
 }
 
 object NativeToolRegistry {
@@ -215,14 +225,28 @@ object NativeToolRegistry {
         ),
         NativeToolDescriptor(
             name = "tool_registry",
-            description = "Return registered native tools with category, access mode, risk level, schema, auto-recovery flag, and debug hints. Use this to inspect available capabilities before choosing tools.",
+            description = "Return a compact index of registered native tools with category, access mode, risk level, and auto-recovery flag. This is intentionally schema-light for progressive loading; use tool_info for one exact tool schema.",
             category = "diagnostics",
             access = NativeToolAccess.READ_ONLY,
-            risk = NativeToolRisk.LOW
+            risk = NativeToolRisk.LOW,
+            properties = props(
+                "category" to stringProp(""),
+                "search" to stringProp(""),
+                "include_schema" to boolProp(false)
+            )
+        ),
+        NativeToolDescriptor(
+            name = "tool_info",
+            description = "Return full metadata and JSON schema for one registered native tool. Use this after tool_registry when you need exact arguments for a specific tool.",
+            category = "diagnostics",
+            access = NativeToolAccess.READ_ONLY,
+            risk = NativeToolRisk.LOW,
+            properties = props("name" to stringProp()),
+            required = req("name")
         ),
         NativeToolDescriptor(
             name = "toolset_request",
-            description = "Control the active toolset for this chat session. Use this when you need tools beyond baseline: request additional groups (planning, workspace, phone, web, terminal, mcp, plugins, recovery, diagnostics) or explicit tool names before using them.",
+            description = "Control the active toolset for this chat session. Use this when you need tools beyond baseline: request additional groups (planning, workspace, phone, web, terminal, mcp, ssh, plugins, memory, recovery, diagnostics) or explicit tool names before using them.",
             category = "diagnostics",
             access = NativeToolAccess.READ_ONLY,
             risk = NativeToolRisk.LOW,
@@ -426,11 +450,14 @@ object NativeToolRegistry {
         ),
         NativeToolDescriptor(
             name = "plugin_list",
-            description = "List plugin manifests from the Android APP native plugin workspace. Disabled plugins are included by default.",
+            description = "List a compact index of plugins from the Android APP native plugin workspace. Disabled plugins are included by default. Use plugin_read for one full manifest.",
             category = "plugins",
             access = NativeToolAccess.READ_ONLY,
             risk = NativeToolRisk.LOW,
-            properties = props("include_disabled" to boolProp(true))
+            properties = props(
+                "include_disabled" to boolProp(true),
+                "include_details" to boolProp(false)
+            )
         ),
         NativeToolDescriptor(
             name = "plugin_create",
@@ -546,19 +573,41 @@ object NativeToolRegistry {
         NativeToolDescriptor("host_wait_for_text", "Wait until visible text or content description appears on screen, polling Accessibility until timeout.", "phone", NativeToolAccess.READ_ONLY, NativeToolRisk.LOW, props("text" to stringProp(), "timeout_ms" to intProp(5000), "contains" to boolProp(true)), req("text")),
         NativeToolDescriptor("host_open_url", "Open a URL with Android ACTION_VIEW. This launches the user's browser or matching app.", "phone", NativeToolAccess.SCREEN_ACTION, NativeToolRisk.MEDIUM, props("url" to stringProp()), req("url")),
         NativeToolDescriptor(
+            name = "mcp_servers",
+            description = "List configured MCP server profiles. Use this before mcp_status/mcp_tools when multiple computer MCP servers may exist.",
+            category = "mcp",
+            access = NativeToolAccess.READ_ONLY,
+            risk = NativeToolRisk.LOW
+        ),
+        NativeToolDescriptor(
             "mcp_status",
-            "Check the configured remote MCP endpoint, auth presence, and runtime connectivity. Use this first when the user asks to control or inspect a Windows PC, desktop, remote computer, or MCP server.",
+            "Check one configured remote MCP server, auth presence, and runtime connectivity. Use server='default' unless the user selected another computer MCP server.",
             "mcp",
             NativeToolAccess.READ_ONLY,
-            NativeToolRisk.LOW
+            NativeToolRisk.LOW,
+            props("server" to stringProp("default"))
         ),
         NativeToolDescriptor(
             name = "mcp_tools",
-            description = "List available remote MCP tools from the configured MCP server, including discoverable tool names, schemas, and raw metadata. Call this after mcp_status and before mcp_call so you can use the exact remote tool name and arguments.",
+            description = "List available remote MCP tools from the configured MCP server as a compact index by default. Call this after mcp_status; set include_schema=true only for a narrow search or use mcp_tool_info before mcp_call.",
             category = "mcp",
             access = NativeToolAccess.READ_ONLY,
             risk = NativeToolRisk.LOW,
-            properties = props("search" to stringProp("")),
+            properties = props(
+                "server" to stringProp("default"),
+                "search" to stringProp(""),
+                "include_schema" to boolProp(false)
+            ),
+            autoRecover = true
+        ),
+        NativeToolDescriptor(
+            name = "mcp_tool_info",
+            description = "Return full schema and metadata for one remote MCP tool by exact name from the active MCP server. Use this after mcp_tools and before mcp_call when arguments are unclear.",
+            category = "mcp",
+            access = NativeToolAccess.READ_ONLY,
+            risk = NativeToolRisk.LOW,
+            properties = props("tool" to stringProp(), "server" to stringProp("default")),
+            required = req("tool"),
             autoRecover = true
         ),
         NativeToolDescriptor(
@@ -568,12 +617,275 @@ object NativeToolRegistry {
             access = NativeToolAccess.TERMINAL_DELEGATION,
             risk = NativeToolRisk.HIGH,
             properties = props(
+                "server" to stringProp("default"),
                 "tool" to stringProp(),
                 "arguments" to JSONObject().put("type", "object"),
                 "timeout_ms" to intProp(60000)
             ),
             required = req("tool"),
             autoRecover = false
+        ),
+        NativeToolDescriptor(
+            name = "mcp_configure",
+            description = "Update the configured remote MCP endpoint and auth token from inside the agent loop, then optionally verify the connection. Use this when Windows MCP token/URL changed and the phone app still has stale MCP config.",
+            category = "mcp",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.MEDIUM,
+            properties = props(
+                "enabled" to boolProp(true),
+                "id" to stringProp("default"),
+                "server" to stringProp("default"),
+                "name" to stringProp(""),
+                "type" to stringProp("desktop"),
+                "base_url" to stringProp(""),
+                "endpoint" to stringProp(""),
+                "auth_token" to stringProp(""),
+                "token" to stringProp(""),
+                "verify" to boolProp(true),
+                "set_active" to boolProp(true)
+            ),
+            autoRecover = true
+        ),
+        NativeToolDescriptor(
+            name = "pc_bridge_status",
+            description = "Return a combined phone-to-PC bridge status: SSH configuration/runtime, optional SSH reachability diagnosis, and MCP runtime status. Use this before desktop work to decide whether to use SSH, MCP, or both.",
+            category = "diagnostics",
+            access = NativeToolAccess.READ_ONLY,
+            risk = NativeToolRisk.LOW,
+            properties = props(
+                "diagnose_ssh" to boolProp(true),
+                "ssh_host" to stringProp(""),
+                "ssh_port" to intProp(22),
+                "timeout_ms" to intProp(6000)
+            )
+        ),
+        NativeToolDescriptor(
+            name = "pc_bridge_recover",
+            description = "Recover the phone-to-PC bridge in one call: optionally select a working SSH host, connect over SSH, diagnose the remote MCP endpoint from Windows, optionally kill the MCP port process, run a restart command, wait, and verify MCP again. Use this when MCP returns 502/offline or desktop control is broken but SSH may work.",
+            category = "recovery",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.HIGH,
+            properties = props(
+                "hosts" to JSONObject().put("type", "array").put("items", JSONObject().put("type", "string")),
+                "ssh_port" to intProp(22),
+                "mcp_endpoint" to stringProp(""),
+                "auth_token" to stringProp(""),
+                "auth_token_path" to stringProp("D:\\codex\\mobile-agent-project\\tools\\windows-mcp\\.runtime-auth-token.txt"),
+                "auth_token_command" to stringProp(""),
+                "sync_auth_token" to boolProp(true),
+                "use_ssh_tunnel" to boolProp(true),
+                "local_forward_port" to intProp(18000),
+                "remote_forward_host" to stringProp("127.0.0.1"),
+                "remote_forward_port" to intProp(8000),
+                "remote_port" to intProp(8000),
+                "remote_mcp_endpoint" to stringProp("http://127.0.0.1:8000/mcp"),
+                "terminal_fallback" to boolProp(true),
+                "allow_terminal_fallback" to boolProp(true),
+                "terminal_ssh_host" to stringProp(""),
+                "terminal_ssh_user" to stringProp(""),
+                "terminal_ssh_port" to intProp(22),
+                "terminal_identity_path" to stringProp(""),
+                "terminal_fallback_timeout" to intProp(30),
+                "restart_command" to stringProp(""),
+                "start_command" to stringProp(""),
+                "kill_port_process" to boolProp(false),
+                "shell" to stringProp("powershell"),
+                "timeout_ms" to intProp(6000),
+                "command_timeout_ms" to intProp(60000),
+                "wait_ms" to intProp(2500)
+            ),
+            autoRecover = true
+        ),
+        NativeToolDescriptor(
+            name = "ssh_status",
+            description = "Return the configured SSH profile, connection state, and last connection or command error.",
+            category = "ssh",
+            access = NativeToolAccess.READ_ONLY,
+            risk = NativeToolRisk.LOW
+        ),
+        NativeToolDescriptor(
+            name = "ssh_diagnose",
+            description = "Diagnose phone-to-PC SSH reachability from the Android network stack. It checks TCP connectivity and whether the remote host returns an SSH banner, which helps distinguish LAN/Tailscale/firewall problems from key-auth problems.",
+            category = "ssh",
+            access = NativeToolAccess.READ_ONLY,
+            risk = NativeToolRisk.LOW,
+            properties = props(
+                "host" to stringProp(""),
+                "port" to intProp(22),
+                "timeout_ms" to intProp(8000)
+            )
+        ),
+        NativeToolDescriptor(
+            name = "ssh_select_host",
+            description = "Try multiple candidate SSH hosts from the phone, select the first one that returns an SSH banner, and optionally save it as the configured SSH host. Use this instead of asking the user to choose between LAN and Tailscale addresses manually.",
+            category = "ssh",
+            access = NativeToolAccess.READ_ONLY,
+            risk = NativeToolRisk.LOW,
+            properties = props(
+                "hosts" to JSONObject().put("type", "array").put("items", JSONObject().put("type", "string")),
+                "host" to stringProp(""),
+                "port" to intProp(22),
+                "timeout_ms" to intProp(6000),
+                "apply" to boolProp(true)
+            )
+        ),
+        NativeToolDescriptor(
+            name = "tailscale_preflight",
+            description = "Check whether the phone can reach the PC over Tailscale SSH before remote computer work. It probes the PC Tailscale address for an SSH banner; if unavailable it can open the Tailscale Android app so the user can connect VPN. Use this before remote/off-LAN PC tasks.",
+            category = "ssh",
+            access = NativeToolAccess.SCREEN_ACTION,
+            risk = NativeToolRisk.MEDIUM,
+            properties = props(
+                "host" to stringProp(""),
+                "tailscale_host" to stringProp(""),
+                "port" to intProp(22),
+                "timeout_ms" to intProp(6000),
+                "open_app_if_needed" to boolProp(true),
+                "apply_if_ok" to boolProp(false),
+                "package" to stringProp("com.tailscale.ipn")
+            )
+        ),
+        NativeToolDescriptor(
+            name = "tailscale_ssh_diagnose",
+            description = "Diagnose why a Tailscale address does not behave like SSH from the phone. It checks phone-to-Tailscale TCP/banner, then uses the currently working SSH host to inspect Windows sshd, port 22 listeners, firewall SSH rules, Tailscale status, and IPs. With try_fix=true it attempts to start sshd and add a basic inbound firewall rule.",
+            category = "ssh",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.HIGH,
+            properties = props(
+                "host" to stringProp(""),
+                "tailscale_host" to stringProp(""),
+                "port" to intProp(22),
+                "timeout_ms" to intProp(6000),
+                "command_timeout_ms" to intProp(90000),
+                "try_fix" to boolProp(false)
+            ),
+            autoRecover = true
+        ),
+        NativeToolDescriptor(
+            name = "ssh_connect",
+            description = "Open a native SSH session to the configured remote host using key authentication. Use this before remote command execution or file transfer.",
+            category = "ssh",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.HIGH,
+            properties = props(
+                "enabled" to boolProp(true),
+                "host" to stringProp(""),
+                "port" to intProp(22),
+                "user" to stringProp(""),
+                "key_path" to stringProp(""),
+                "passphrase" to stringProp(""),
+                "connect_timeout_ms" to intProp(8000),
+                "command_timeout_ms" to intProp(60000)
+            )
+        ),
+        NativeToolDescriptor(
+            name = "ssh_run",
+            description = "Run a command on the connected SSH host and return stdout, stderr, and exit code. Prefer PowerShell on Windows hosts.",
+            category = "ssh",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.HIGH,
+            properties = props(
+                "command" to stringProp(),
+                "cwd" to stringProp(""),
+                "shell" to stringProp("powershell"),
+                "timeout_ms" to intProp(60000)
+            ),
+            required = req("command")
+        ),
+        NativeToolDescriptor(
+            name = "ssh_forward_status",
+            description = "Return the active SSH local port forwarding state, if any. Use this to verify whether phone localhost is tunneled to a PC service.",
+            category = "ssh",
+            access = NativeToolAccess.READ_ONLY,
+            risk = NativeToolRisk.LOW
+        ),
+        NativeToolDescriptor(
+            name = "ssh_forward_start",
+            description = "Start SSH local port forwarding inside the Android app, for example phone 127.0.0.1:18000 -> PC 127.0.0.1:8000. Use this when the phone cannot directly reach a PC HTTP service but SSH works.",
+            category = "ssh",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.HIGH,
+            properties = props(
+                "local_port" to intProp(18000),
+                "remote_host" to stringProp("127.0.0.1"),
+                "remote_port" to intProp(8000)
+            ),
+            autoRecover = true
+        ),
+        NativeToolDescriptor(
+            name = "ssh_forward_stop",
+            description = "Stop the active SSH local port forwarding listener inside the Android app.",
+            category = "ssh",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.MEDIUM
+        ),
+        NativeToolDescriptor(
+            name = "ssh_disconnect",
+            description = "Close the active SSH session and clear local connection state.",
+            category = "ssh",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.MEDIUM
+        ),
+        NativeToolDescriptor(
+            name = "file_push",
+            description = "Upload a local file from the Android workspace or shared storage to the SSH host over SFTP.",
+            category = "ssh",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.HIGH,
+            properties = props(
+                "local_path" to stringProp(),
+                "remote_path" to stringProp(),
+                "overwrite" to boolProp(true)
+            ),
+            required = req("local_path", "remote_path")
+        ),
+        NativeToolDescriptor(
+            name = "file_pull",
+            description = "Download a file from the SSH host into the Android workspace or shared storage over SFTP.",
+            category = "ssh",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.HIGH,
+            properties = props(
+                "remote_path" to stringProp(),
+                "local_path" to stringProp(""),
+                "overwrite" to boolProp(true)
+            ),
+            required = req("remote_path")
+        ),
+        NativeToolDescriptor(
+            name = "pc_file_workflow",
+            description = "Run the common phone-file-to-PC workflow in one call: verify Android shared storage permission, connect SSH, upload or download a file, optionally run a processing command on the PC with {remote_path}/{local_path} placeholders, and optionally pull a result file back to the phone. Use for WeChat/Download files that are easier to process on the PC.",
+            category = "ssh",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.HIGH,
+            properties = props(
+                "direction" to stringProp("phone_to_pc"),
+                "local_path" to stringProp(""),
+                "remote_path" to stringProp(""),
+                "process_command" to stringProp(""),
+                "result_remote_path" to stringProp(""),
+                "result_local_path" to stringProp(""),
+                "cwd" to stringProp(""),
+                "shell" to stringProp("powershell"),
+                "timeout_ms" to intProp(60000),
+                "overwrite" to boolProp(true),
+                "fail_on_process_error" to boolProp(true)
+            ),
+            autoRecover = true
+        ),
+        NativeToolDescriptor(
+            name = "storage_permission_status",
+            description = "Return whether Android all-files access is granted for shared_storage:/ paths such as Download or WeChat-exported files.",
+            category = "ssh",
+            access = NativeToolAccess.READ_ONLY,
+            risk = NativeToolRisk.LOW
+        ),
+        NativeToolDescriptor(
+            name = "storage_permission_open_settings",
+            description = "Open Android settings where the user can grant all-files access for shared_storage:/ file transfer workflows.",
+            category = "ssh",
+            access = NativeToolAccess.TERMINAL_DELEGATION,
+            risk = NativeToolRisk.MEDIUM
         ),
         NativeToolDescriptor(
             name = "memory_query",
@@ -794,29 +1106,17 @@ object NativeToolRegistry {
             "get_time",
             "toolset_request",
             "tool_registry",
+            "tool_info",
             "task_plan_update",
             "task_plan_status",
-            "task_create",
-            "task_list",
-            "task_update",
-            "task_log_append",
-            "task_artifact_write",
-            "task_reports",
-            "task_report_read",
-            "task_report_summarize",
-            "task_failure_latest",
             "docs_index",
             "docs_read",
             "docs_search",
-            "docs_sync",
-            "system_logs",
             "self_health_check",
-            "mcp_status",
-            "mcp_tools",
-            "memory_query",
             "memory_search",
             "experience_search",
-            "procedure_search"
+            "procedure_search",
+            "mcp_servers"
         ),
         "planning" to descriptors.filter { it.category == "planning" }.mapTo(linkedSetOf()) { it.name },
         "diagnostics" to descriptors.filter { it.category == "diagnostics" }.mapTo(linkedSetOf()) { it.name },
@@ -824,6 +1124,7 @@ object NativeToolRegistry {
         "workspace" to descriptors.filter { it.category == "workspace" }.mapTo(linkedSetOf()) { it.name },
         "plugins" to descriptors.filter { it.category == "plugins" }.mapTo(linkedSetOf()) { it.name },
         "phone" to descriptors.filter { it.category == "phone" }.mapTo(linkedSetOf()) { it.name },
+        "ssh" to descriptors.filter { it.category == "ssh" }.mapTo(linkedSetOf()) { it.name },
         "terminal" to descriptors.filter { it.category == "terminal" }.mapTo(linkedSetOf()) { it.name },
         "mcp" to descriptors.filter { it.category == "mcp" }.mapTo(linkedSetOf()) { it.name },
         "memory" to descriptors.filter { it.category == "memory" }.mapTo(linkedSetOf()) { it.name },
@@ -849,6 +1150,27 @@ object NativeToolRegistry {
         val array = JSONArray()
         normalizeTools(tools).forEach { name ->
             descriptor(name)?.let { array.put(it.metadata()) }
+        }
+        return array
+    }
+
+    fun indexMetadata(
+        tools: Set<String> = allToolNames,
+        category: String = "",
+        search: String = "",
+        includeSchema: Boolean = false
+    ): JSONArray {
+        val normalizedCategory = category.trim().lowercase()
+        val normalizedSearch = search.trim().lowercase()
+        val array = JSONArray()
+        normalizeTools(tools).forEach { name ->
+            val descriptor = descriptor(name) ?: return@forEach
+            if (normalizedCategory.isNotBlank() && descriptor.category.lowercase() != normalizedCategory) return@forEach
+            if (normalizedSearch.isNotBlank() &&
+                !descriptor.name.lowercase().contains(normalizedSearch) &&
+                !descriptor.description.lowercase().contains(normalizedSearch)
+            ) return@forEach
+            array.put(if (includeSchema) descriptor.metadata() else descriptor.indexMetadata())
         }
         return array
     }
@@ -880,6 +1202,8 @@ object NativeToolRegistry {
         }
         if (resolved.isEmpty()) return baselineTools()
         resolved.add("toolset_request")
+        resolved.add("tool_registry")
+        resolved.add("tool_info")
         return resolved
     }
 

@@ -45,7 +45,7 @@ object HostBridgeServer {
                         socket.use {
                             try {
                                 handle(it)
-                            } catch (exc: Exception) {
+                            } catch (exc: Throwable) {
                                 AgentLogStore.record(
                                     appContext,
                                     "warn",
@@ -61,7 +61,7 @@ object HostBridgeServer {
                     }
                 }
             }
-        } catch (exc: Exception) {
+        } catch (exc: Throwable) {
             AgentLogStore.record(
                 appContext,
                 "error",
@@ -121,7 +121,7 @@ object HostBridgeServer {
                     .put("bridge", "127.0.0.1:$PORT")
                     .put("permission_mode", runtimeConfig()?.permissionMode() ?: AgentRuntimeConfig.MODE_SAFE)
                     .put("config", runtimeConfig()?.configJson() ?: JSONObject())
-                    .put("terminal_runtime", appContext?.let { NativeAgentCore(it).terminalHealthForUi(autoRecover = false) } ?: JSONObject())
+                    .put("terminal_runtime", appContext?.let { NativeAgentCore(it).terminalHealthForUi(autoRecover = false, force = false) } ?: JSONObject())
                     .put("accessibility", AccessibilityState.status(appContext))
 
                 method == "GET" && cleanPath == "/config" -> JSONObject()
@@ -154,7 +154,7 @@ object HostBridgeServer {
                     .put("ok", false)
                     .put("error", "Not found: $method $cleanPath")
             }
-        } catch (exc: Exception) {
+        } catch (exc: Throwable) {
             JSONObject()
                 .put("ok", false)
                 .put("error", "${exc.javaClass.simpleName}: ${exc.message}")
@@ -255,7 +255,7 @@ object HostBridgeServer {
                 .put("ok", false)
                 .put("needs_permission", true)
                 .put("permission_mode", mode)
-                .put("error", "当前是安全模式，Host bridge 只允许观察。请在 APP 配置中切换到“确认操作”或“最高权限”。")
+                .put("error", "当前是安全模式，Host bridge 只允许观察。请在应用配置中切换到“确认操作”或“最高权限”。")
         }
         if (!actionsApproved) {
             return JSONObject()

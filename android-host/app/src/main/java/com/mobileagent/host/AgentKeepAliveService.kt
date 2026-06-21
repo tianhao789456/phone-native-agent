@@ -51,7 +51,7 @@ class AgentKeepAliveService : Service() {
                     "Mobile Agent 保活",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
-                    description = "保持手机 Agent 基座桥接与本地服务可用"
+                    description = "保持手机 Agent 本地桥接与服务可用"
                 }
             )
         }
@@ -64,7 +64,7 @@ class AgentKeepAliveService : Service() {
         return builder
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle("手机 Agent")
-            .setContentText("基座保活中，桥接服务保持可用")
+            .setContentText("本地服务保活中，桥接保持可用")
             .setOngoing(true)
             .build()
     }

@@ -1,8 +1,10 @@
-package com.mobileagent.host
+﻿package com.mobileagent.host
 
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Environment
+import android.provider.Settings
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -26,6 +28,9 @@ class NativeAgentCore(private val context: Context) {
     private val workspace = MobileWorkspace(context)
     private val plugins = MobilePluginRegistry(context)
     private val memory = MobileMemoryStore(context)
+    private val sshBridge = SshBridge(context, runtimeConfig, workspace) { level, component, message, details ->
+        log(level, component, message, details)
+    }
     private val stopRequests = ConcurrentHashMap<String, AtomicBoolean>()
     private val profile = NativeAgentProfile
     private val modelClient = NativeModelClient(
@@ -66,6 +71,19 @@ class NativeAgentCore(private val context: Context) {
         }
     }
 
+    fun setSshConfig(
+        enabled: Boolean,
+        host: String,
+        port: Int,
+        user: String,
+        keyPath: String = "",
+        passphrase: String = "",
+        connectTimeoutMs: Int = runtimeConfig.sshConnectTimeoutMs(),
+        commandTimeoutMs: Int = runtimeConfig.sshCommandTimeoutMs()
+    ) {
+        runtimeConfig.setSshConfig(enabled, host, port, user, keyPath, passphrase, connectTimeoutMs, commandTimeoutMs)
+    }
+
     fun setMaxToolRounds(value: Int) {
         runtimeConfig.setMaxToolRounds(value)
     }
@@ -74,8 +92,8 @@ class NativeAgentCore(private val context: Context) {
         return terminalStatus()
     }
 
-    fun terminalHealthForUi(autoRecover: Boolean = false): JSONObject {
-        return terminalRuntimeStatus(autoRecover = autoRecover, force = true)
+    fun terminalHealthForUi(autoRecover: Boolean = false, force: Boolean = true): JSONObject {
+        return terminalRuntimeStatus(autoRecover = autoRecover, force = force)
     }
 
     fun mcpAuthToken(): String {
@@ -87,7 +105,51 @@ class NativeAgentCore(private val context: Context) {
     }
 
     fun mcpToolsForUi(search: String = ""): JSONObject {
-        return mcpTools(search)
+        return mcpTools(search, includeSchema = true)
+    }
+
+    fun sshStatusForUi(): JSONObject {
+        return sshBridge.status()
+    }
+
+    fun sshConnectForUi(arguments: JSONObject = JSONObject()): JSONObject {
+        return sshBridge.connect(arguments)
+    }
+
+    fun sshDiagnoseForUi(arguments: JSONObject = JSONObject()): JSONObject {
+        return sshBridge.diagnose(arguments)
+    }
+
+    fun sshSelectHostForUi(arguments: JSONObject = JSONObject()): JSONObject {
+        return sshBridge.selectHost(arguments)
+    }
+
+    fun sshDisconnectForUi(): JSONObject {
+        return sshBridge.disconnect()
+    }
+
+    fun sshPassphraseForUi(): String {
+        return runtimeConfig.sshPassphrase()
+    }
+
+    fun sshRunForUi(arguments: JSONObject): JSONObject {
+        return sshRun(arguments)
+    }
+
+    fun sshPushForUi(arguments: JSONObject): JSONObject {
+        return sshFilePush(arguments)
+    }
+
+    fun sshPullForUi(arguments: JSONObject): JSONObject {
+        return sshFilePull(arguments)
+    }
+
+    fun storagePermissionStatusForUi(): JSONObject {
+        return storagePermissionStatus()
+    }
+
+    fun openStoragePermissionSettingsForUi(): JSONObject {
+        return openStoragePermissionSettings()
     }
 
     fun systemLogsForUi(limit: Int = 80): JSONObject {
@@ -224,9 +286,11 @@ class NativeAgentCore(private val context: Context) {
             .put("terminal_runtime", terminalRuntimeStatus(autoRecover = true, force = false))
             .put("mcp", runtimeConfig.mcpConfigJson())
             .put("mcp_runtime", mcpRuntimeStatus(force = false))
+            .put("ssh", runtimeConfig.sshConfigJson())
+            .put("ssh_runtime", sshBridge.status())
             .put("config", runtimeConfig.configJson())
             .put("tools", JSONArray(activeToolset.toList()))
-            .put("tool_registry", NativeToolRegistry.metadata(activeToolset))
+            .put("tool_registry", NativeToolRegistry.indexMetadata(activeToolset))
             .put(
                 "toolset",
                 JSONObject()
@@ -524,13 +588,14 @@ class NativeAgentCore(private val context: Context) {
             modelResponse = requestModelWithEvents(apiKey, messages, "after_tools", toolRounds, enabledTools, memoryContext)
         }
 
-        val finalText = when {
+        val finalTextRaw = when {
             stoppedByUser != null -> userStopFinalText(stoppedByUser)
             stoppedByLoopGuard != null -> loopGuardFinalText(stoppedByLoopGuard)
             else -> modelResponse.content.ifBlank {
                 if (toolRounds >= maxToolRounds) "已达到工具调用轮数上限。" else ""
             }
         }
+        val finalText = normalizeVisibleChinese(finalTextRaw)
         val loopStatus = when {
             stoppedByUser != null -> "user_stopped"
             stoppedByLoopGuard != null -> "blocked_by_loop_guard"
@@ -1207,7 +1272,7 @@ class NativeAgentCore(private val context: Context) {
 
     private fun userStopFinalText(blocker: JSONObject): String {
         return "已收到停止指令，本次任务已停止。\n" +
-            "阶段：${blocker.optString("phase", "")}，请确认要继续的目标后继续发送新消息。"
+            "阶段：${blocker.optString("phase", "")}。请确认要继续的目标后发送新消息。"
     }
 
     private fun loopGuardFinalText(blocker: JSONObject): String {
@@ -1216,7 +1281,7 @@ class NativeAgentCore(private val context: Context) {
             append("卡住工具：").append(blocker.optString("tool", "-")).append("\n")
             append("失败状态：").append(blocker.optString("state", "-")).append("\n")
             append("原因：").append(blocker.optString("summary", "重试预算耗尽")).append("\n\n")
-            append("我已经把最新观察和失败详情写入任务报告。下一步应该先检查当前屏幕/后端状态，再换工具或参数继续。")
+            append("我已经把最新观察和失败详情写入任务报告。下一步应该先检查当前屏幕或后端状态，再换工具或参数继续。")
         }
     }
 
@@ -1265,6 +1330,10 @@ class NativeAgentCore(private val context: Context) {
             "terminal_run" -> verifyTerminalRun(output)
             "terminal_script" -> verifyTerminalScript(arguments, output)
             "terminal_task_status" -> verifyTerminalTaskStatus(output)
+            "ssh_connect" -> verifySshConnect(output)
+            "ssh_run" -> verifySshRun(output)
+            "file_push" -> verifySshTransfer(output, "file_push")
+            "file_pull" -> verifySshTransfer(output, "file_pull")
             else -> JSONObject()
                 .put("required", false)
                 .put("ok", true)
@@ -1388,6 +1457,49 @@ class NativeAgentCore(private val context: Context) {
             .put("status", if (ok) "verified" else "task_unhealthy")
             .put("summary", if (ok) "Verified terminal task status." else "terminal task status is unhealthy: status=$status returncode=$returnCode.")
             .put("evidence", JSONObject().put("status", status).put("returncode", returnCode).put("task_id", result.optString("task_id", "")))
+    }
+
+    private fun verifySshConnect(output: JSONObject): JSONObject {
+        val result = output.optJSONObject("result") ?: JSONObject()
+        val ok = output.optBoolean("ok", false) && result.optBoolean("connected", false)
+        return JSONObject()
+            .put("required", true)
+            .put("ok", ok)
+            .put("status", if (ok) "verified" else "connect_failed")
+            .put("summary", if (ok) "Verified SSH session is connected." else "ssh_connect did not establish a session.")
+            .put("evidence", JSONObject().put("connected", result.optBoolean("connected", false)).put("host", result.optString("host", "")))
+    }
+
+    private fun verifySshRun(output: JSONObject): JSONObject {
+        val wrapper = output.optJSONObject("result") ?: JSONObject()
+        val result = wrapper.optJSONObject("result") ?: wrapper
+        val timedOut = result.optBoolean("timed_out", false)
+        val returnCode = result.optInt("returncode", -1)
+        val ok = output.optBoolean("ok", false) && !timedOut && returnCode == 0
+        return JSONObject()
+            .put("required", true)
+            .put("ok", ok)
+            .put("status", if (ok) "verified" else if (timedOut) "timeout" else "command_failed")
+            .put("summary", if (ok) "Verified ssh_run returncode=0." else "ssh_run verification failed: returncode=$returnCode timed_out=$timedOut.")
+            .put("evidence", JSONObject().put("returncode", returnCode).put("timed_out", timedOut))
+    }
+
+    private fun verifySshTransfer(output: JSONObject, toolName: String): JSONObject {
+        val wrapper = output.optJSONObject("result") ?: JSONObject()
+        val result = wrapper.optJSONObject("result") ?: wrapper
+        val ok = output.optBoolean("ok", false) && result.optString("remote_path", "").isNotBlank()
+        return JSONObject()
+            .put("required", true)
+            .put("ok", ok)
+            .put("status", if (ok) "verified" else "transfer_failed")
+            .put("summary", if (ok) "Verified $toolName transfer." else "$toolName transfer failed.")
+            .put(
+                "evidence",
+                JSONObject()
+                    .put("local_path", result.optString("local_path", ""))
+                    .put("remote_path", result.optString("remote_path", ""))
+                    .put("bytes", result.optLong("bytes", -1))
+            )
     }
 
     private fun verificationFailed(status: String, summary: String): JSONObject {
@@ -1911,28 +2023,30 @@ class NativeAgentCore(private val context: Context) {
         val content = memoryContext?.optString("content", "")?.trim().orEmpty()
         if (content.isBlank()) return messages
         val copy = JSONArray()
-        val first = messages.optJSONObject(0)
-        if (first?.optString("role") == "system") {
-            copy.put(JSONObject(first.toString()))
-            copy.put(
-                JSONObject()
-                    .put("role", "system")
-                    .put("content", "[MOBILE_AGENT_RELEVANT_MEMORY_V2]\n$content")
+        val memoryItem = JSONObject()
+            .put("role", "system")
+            .put(
+                "content",
+                "[MOBILE_AGENT_RELEVANT_MEMORY_V2]\n" +
+                    "This request-specific context is intentionally injected near the latest user message to keep the stable prompt prefix cache-friendly.\n" +
+                    content
             )
-            for (index in 1 until messages.length()) {
-                copy.put(JSONObject(messages.getJSONObject(index).toString()))
+        val latestUserIndex = findLatestUserMessageIndex(messages)
+        for (index in 0 until messages.length()) {
+            if (index == latestUserIndex) {
+                copy.put(memoryItem)
             }
-        } else {
-            copy.put(
-                JSONObject()
-                    .put("role", "system")
-                    .put("content", "[MOBILE_AGENT_RELEVANT_MEMORY_V2]\n$content")
-            )
-            for (index in 0 until messages.length()) {
-                copy.put(JSONObject(messages.getJSONObject(index).toString()))
-            }
+            copy.put(JSONObject(messages.getJSONObject(index).toString()))
         }
+        if (latestUserIndex < 0) copy.put(memoryItem)
         return copy
+    }
+
+    private fun findLatestUserMessageIndex(messages: JSONArray): Int {
+        for (index in messages.length() - 1 downTo 0) {
+            if (messages.optJSONObject(index)?.optString("role") == "user") return index
+        }
+        return -1
     }
 
     private fun executeTool(
@@ -1988,9 +2102,8 @@ class NativeAgentCore(private val context: Context) {
                     arguments.optInt("max_bytes", 20000)
                 )
                 "toolset_request" -> applyToolsetRequest(sessionId, arguments)
-                "tool_registry" -> JSONObject()
-                    .put("ok", true)
-                    .put("tools", NativeToolRegistry.metadata())
+                "tool_registry" -> toolRegistry(arguments, sessionId)
+                "tool_info" -> toolInfo(arguments)
                 "docs_index" -> docsIndex()
                 "docs_read" -> docsRead(arguments)
                 "docs_search" -> docsSearch(arguments)
@@ -2052,7 +2165,10 @@ class NativeAgentCore(private val context: Context) {
                 )
                 "workspace_restore" -> workspace.restore(arguments.optString("change_id"))
                 "plugin_info" -> plugins.info()
-                "plugin_list" -> plugins.list(arguments.optBoolean("include_disabled", true))
+                "plugin_list" -> plugins.list(
+                    arguments.optBoolean("include_disabled", true),
+                    arguments.optBoolean("include_details", false)
+                )
                 "plugin_create" -> plugins.create(
                     arguments.optJSONObject("manifest") ?: JSONObject(),
                     arguments.optBoolean("overwrite", false)
@@ -2139,13 +2255,39 @@ class NativeAgentCore(private val context: Context) {
                     arguments.optInt("max_output_chars", 12000)
                 )
                 "terminal_task_cancel" -> terminalTaskCancel(arguments.optString("task_id"))
-                "mcp_status" -> mcpStatus()
-                "mcp_tools" -> mcpTools(arguments.optString("search", ""))
+                "mcp_servers" -> mcpServers()
+                "mcp_status" -> mcpStatus(arguments.optString("server", "default"))
+                "mcp_tools" -> mcpTools(
+                    arguments.optString("search", ""),
+                    arguments.optBoolean("include_schema", false),
+                    arguments.optString("server", "default")
+                )
+                "mcp_tool_info" -> mcpToolInfo(arguments.optString("tool"), arguments.optString("server", "default"))
                 "mcp_call" -> mcpCall(
                     arguments.optString("tool"),
                     arguments.optJSONObject("arguments") ?: JSONObject(),
-                    arguments.optInt("timeout_ms", 60000).coerceIn(1_000, 300_000)
+                    arguments.optInt("timeout_ms", 60000).coerceIn(1_000, 300_000),
+                    arguments.optString("server", "default")
                 )
+                "mcp_configure" -> mcpConfigure(arguments)
+                "pc_bridge_status" -> pcBridgeStatus(arguments)
+                "pc_bridge_recover" -> pcBridgeRecover(arguments)
+                "tailscale_preflight" -> tailscalePreflight(arguments)
+                "tailscale_ssh_diagnose" -> tailscaleSshDiagnose(arguments)
+                "ssh_status" -> sshBridge.status()
+                "ssh_diagnose" -> sshBridge.diagnose(arguments)
+                "ssh_select_host" -> sshBridge.selectHost(arguments)
+                "ssh_connect" -> sshConnect(arguments)
+                "ssh_run" -> sshRun(arguments)
+                "ssh_forward_status" -> sshBridge.forwardStatus()
+                "ssh_forward_start" -> sshBridge.startLocalForward(arguments)
+                "ssh_forward_stop" -> sshBridge.stopLocalForward()
+                "ssh_disconnect" -> sshBridge.disconnect()
+                "file_push" -> sshFilePush(arguments)
+                "file_pull" -> sshFilePull(arguments)
+                "pc_file_workflow" -> pcFileWorkflow(arguments)
+                "storage_permission_status" -> storagePermissionStatus()
+                "storage_permission_open_settings" -> openStoragePermissionSettings()
                 else -> throw IllegalArgumentException("Unknown tool: $name")
             }
             JSONObject().put("ok", true).put("result", result)
@@ -2216,6 +2358,36 @@ class NativeAgentCore(private val context: Context) {
             )
     }
 
+    private fun toolRegistry(arguments: JSONObject, sessionId: String?): JSONObject {
+        val activeTools = resolveToolsetForSession(sessionId)
+        val includeSchema = arguments.optBoolean("include_schema", false)
+        val category = arguments.optString("category", "")
+        val search = arguments.optString("search", "")
+        return JSONObject()
+            .put("ok", true)
+            .put("progressive_loading", true)
+            .put("detail_tool", "tool_info")
+            .put("available_groups", NativeToolRegistry.availableGroups())
+            .put("active_tool_count", activeTools.size)
+            .put("tools", NativeToolRegistry.indexMetadata(activeTools, category, search, includeSchema))
+    }
+
+    private fun toolInfo(arguments: JSONObject): JSONObject {
+        val name = arguments.optString("name").trim()
+        if (name.isBlank()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "name is required")
+        }
+        val descriptor = NativeToolRegistry.descriptor(name)
+            ?: return JSONObject()
+                .put("ok", false)
+                .put("error", "Unknown tool: $name")
+        return JSONObject()
+            .put("ok", true)
+            .put("tool", descriptor.metadata())
+    }
+
     private fun docsIndex(): JSONObject {
         return MobileAgentDocs.index(context)
     }
@@ -2256,7 +2428,7 @@ class NativeAgentCore(private val context: Context) {
                     .put("needs_permission", true)
                     .put("permission_mode", mode)
                     .put("tool", toolMetadata)
-                    .put("error", "当前是安全模式，只允许观察。请在 APP 配置中切换到确认操作或最高权限后再操作手机。")
+                    .put("error", "当前是安全模式，只允许观察。请在应用配置中切换到确认动作或高权限后再操作手机。")
             }
             if (!actionsApproved) {
                 return JSONObject()
@@ -2264,7 +2436,7 @@ class NativeAgentCore(private val context: Context) {
                     .put("needs_confirmation", true)
                     .put("permission_mode", mode)
                     .put("tool", toolMetadata)
-                    .put("error", "动作工具需要用户在 APP 弹窗中确认本次请求：$name")
+                    .put("error", "动作工具需要用户在应用弹窗中确认本次请求：$name")
             }
             return null
         }
@@ -2275,7 +2447,7 @@ class NativeAgentCore(private val context: Context) {
                     .put("needs_permission", true)
                     .put("permission_mode", mode)
                     .put("tool", toolMetadata)
-                    .put("error", "终端委托需要最高权限或开发者模式。请在 APP 配置中主动选择。")
+                    .put("error", "终端委托需要高风险或开发者模式。请在 APP 配置中主动选择。")
             }
             if (!actionsApproved) {
                 return JSONObject()
@@ -2293,14 +2465,14 @@ class NativeAgentCore(private val context: Context) {
                     .put("ok", false)
                     .put("needs_permission", true)
                     .put("permission_mode", mode)
-                    .put("error", "当前是安全模式，只允许观察。请在 APP 配置中切换到“确认操作”或“最高权限”后再操作手机。")
+                    .put("error", "当前是安全模式，只允许观察。请在应用配置中切换到确认动作或高权限后再操作手机。")
             }
             if (!actionsApproved) {
                 return JSONObject()
                     .put("ok", false)
                     .put("needs_confirmation", true)
                     .put("permission_mode", mode)
-                    .put("error", "动作工具需要用户在 APP 弹窗中确认本次请求：$name")
+                    .put("error", "动作工具需要用户在应用弹窗中确认本次请求：$name")
             }
         }
         if (name in terminalDelegationTools) {
@@ -2309,7 +2481,7 @@ class NativeAgentCore(private val context: Context) {
                     .put("ok", false)
                     .put("needs_permission", true)
                     .put("permission_mode", mode)
-                    .put("error", "终端委托需要最高权限或开发者模式。请在 APP 配置中主动选择。")
+                    .put("error", "终端委托需要高风险或开发者模式。请在 APP 配置中主动选择。")
             }
             if (!actionsApproved) {
                 return JSONObject()
@@ -2834,7 +3006,7 @@ class NativeAgentCore(private val context: Context) {
         val actions = JSONArray()
         for (index in 0 until issues.length()) {
             when (issues.optString(index)) {
-                "api_key_missing" -> actions.put("在 APP 输入 -key sk-... 保存模型 API Key")
+                "api_key_missing" -> actions.put("在应用输入 -key sk-... 保存模型 API Key")
                 "accessibility_not_connected" -> actions.put("打开无障碍设置并启用 Mobile Agent Host")
             }
         }
@@ -2856,11 +3028,11 @@ class NativeAgentCore(private val context: Context) {
             return result
                 .put("ok", false)
                 .put("status", "disabled")
-                .put("summary", "终端工具后端未在 APP 配置中启用。")
+                .put("summary", "终端工具后端未在应用配置中启用。")
                 .put("repair_actions", JSONArray().put("启用终端接口为 http://127.0.0.1:8787"))
         }
         if (!terminalPowerMode()) {
-            result.put("repair_actions", result.getJSONArray("repair_actions").put("切换到最高权限 danger 或开发者 developer 后再执行终端工具"))
+            result.put("repair_actions", result.getJSONArray("repair_actions").put("切换到高风险 danger 或开发者 developer 后再执行终端工具"))
         }
 
         val terminalStatus = runCatching {
@@ -2884,7 +3056,7 @@ class NativeAgentCore(private val context: Context) {
                 .put("summary", "后端 /health 可达，但 /terminal/status 不可用，可能是后端版本旧或启动脚本未更新。")
                 .put("health", status)
                 .put("terminal_status_error", terminalStatus.exceptionOrNull()?.message ?: "")
-                .put("repair_actions", result.getJSONArray("repair_actions").put("重启 Termux 后端并确认已同步新版 http_server.py"))
+                .put("repair_actions", result.getJSONArray("repair_actions").put("重启 Termux 后端，并确认已经同步新版 http_server.py"))
         }
 
         val error = terminalStatus.exceptionOrNull()
@@ -3483,8 +3655,8 @@ print(json.dumps({
             .replace("&nbsp;", " ")
     }
 
-    private fun mcpEndpoint(): String {
-        val base = runtimeConfig.mcpBaseUrl().trim().trimEnd('/')
+    private fun mcpEndpoint(serverId: String = "default"): String {
+        val base = runtimeConfig.mcpServerBaseUrl(serverId).trim().trimEnd('/')
         return when {
             base.isBlank() -> "${AgentRuntimeConfig.DEFAULT_MCP_BASE_URL}/mcp"
             base.endsWith("/mcp", ignoreCase = true) -> base
@@ -3492,22 +3664,65 @@ print(json.dumps({
         }
     }
 
-    private fun mcpStatus(): JSONObject {
-        if (!runtimeConfig.mcpEnabled()) {
+    private fun mcpServers(): JSONObject {
+        return JSONObject()
+            .put("ok", true)
+            .put("active_server", runtimeConfig.mcpActiveServerId())
+            .put("servers", runtimeConfig.mcpConfigJson().optJSONArray("servers") ?: JSONArray())
+            .put("usage", "Pass server id to mcp_status, mcp_tools, mcp_tool_info, and mcp_call. Use default for the current Windows MCP unless another server is selected.")
+    }
+
+    private fun mcpConfigure(arguments: JSONObject): JSONObject {
+        val serverId = runtimeConfig.normalizeMcpServerId(arguments.optString("id", arguments.optString("server", "default")))
+        val enabled = arguments.optBoolean("enabled", true)
+        val existing = runCatching { runtimeConfig.mcpServer(serverId) }.getOrNull()
+        val baseUrl = arguments.optString("base_url", arguments.optString("endpoint", existing?.optString("base_url", "") ?: ""))
+            .ifBlank { existing?.optString("base_url") ?: runtimeConfig.mcpBaseUrl() }
+        val token = when {
+            arguments.has("auth_token") -> arguments.optString("auth_token", "")
+            arguments.has("token") -> arguments.optString("token", "")
+            else -> existing?.optString("auth_token") ?: runtimeConfig.mcpServerAuthToken(serverId)
+        }
+        runtimeConfig.setMcpServerConfig(
+            id = serverId,
+            name = arguments.optString("name", existing?.optString("name", "") ?: serverId),
+            type = arguments.optString("type", existing?.optString("type", "desktop") ?: "desktop"),
+            enabled = enabled,
+            baseUrl = baseUrl,
+            authToken = token,
+            setActive = arguments.optBoolean("set_active", true)
+        )
+        mcpSessions.clear()
+        val verify = if (arguments.optBoolean("verify", true)) mcpStatus(serverId) else JSONObject().put("skipped", true)
+        return JSONObject()
+            .put("ok", true)
+            .put("configured", runtimeConfig.mcpConfigJson())
+            .put("server", serverId)
+            .put("endpoint", mcpEndpoint(serverId))
+            .put("verified", verify.optBoolean("available", false))
+            .put("verification", verify)
+    }
+
+    private fun mcpStatus(server: String = "default"): JSONObject {
+        val serverId = runtimeConfig.normalizeMcpServerId(server.ifBlank { runtimeConfig.mcpActiveServerId() })
+        if (!runtimeConfig.mcpServerEnabled(serverId)) {
             return JSONObject()
                 .put("available", false)
                 .put("configured", false)
                 .put("mode", "remote_mcp")
+                .put("server", serverId)
                 .put("config", runtimeConfig.mcpConfigJson())
                 .put("error", "MCP backend is disabled")
         }
         val startedAt = System.currentTimeMillis()
         return runCatching {
-            val tools = mcpTools()
+            val tools = mcpTools(serverId = serverId)
             JSONObject()
                 .put("available", true)
                 .put("configured", true)
                 .put("mode", "remote_mcp")
+                .put("server", serverId)
+                .put("endpoint", mcpEndpoint(serverId))
                 .put("config", runtimeConfig.mcpConfigJson())
                 .put("tool_count", tools.optInt("tool_count", 0))
                 .put("tools", tools.optJSONArray("tools") ?: JSONArray())
@@ -3517,22 +3732,26 @@ print(json.dumps({
                 .put("available", false)
                 .put("configured", true)
                 .put("mode", "remote_mcp")
+                .put("server", serverId)
+                .put("endpoint", runCatching { mcpEndpoint(serverId) }.getOrDefault(""))
                 .put("config", runtimeConfig.mcpConfigJson())
                 .put("duration_ms", System.currentTimeMillis() - startedAt)
                 .put("error", "${error.javaClass.simpleName}: ${error.message}")
         }
     }
 
-    private fun mcpTools(search: String = ""): JSONObject {
-        if (!runtimeConfig.mcpEnabled()) {
+    private fun mcpTools(search: String = "", includeSchema: Boolean = false, serverId: String = "default"): JSONObject {
+        val resolvedServer = runtimeConfig.normalizeMcpServerId(serverId.ifBlank { runtimeConfig.mcpActiveServerId() })
+        if (!runtimeConfig.mcpServerEnabled(resolvedServer)) {
             return JSONObject()
                 .put("available", false)
+                .put("server", resolvedServer)
                 .put("error", "MCP backend is disabled")
                 .put("config", runtimeConfig.mcpConfigJson())
         }
         val startedAt = System.currentTimeMillis()
-        val endpoint = mcpEndpoint()
-        val sessionId = ensureMcpSession(endpoint, AgentRuntimeConfig.MCP_TIMEOUT_MS * 2)
+        val endpoint = mcpEndpoint(resolvedServer)
+        val sessionId = ensureMcpSession(resolvedServer, endpoint, AgentRuntimeConfig.MCP_TIMEOUT_MS * 2)
         val response = mcpPostJson(
             endpoint,
             JSONObject()
@@ -3542,7 +3761,8 @@ print(json.dumps({
                 .put("params", JSONObject())
                 .toString(),
             AgentRuntimeConfig.MCP_TIMEOUT_MS * 2,
-            sessionId
+            sessionId,
+            runtimeConfig.mcpServerAuthToken(resolvedServer)
         )
         val result = parseMcpResult(response.first, "tools/list")
         val allTools = result.optJSONArray("tools") ?: JSONArray()
@@ -3554,7 +3774,7 @@ print(json.dumps({
                 item.optString("name").lowercase().contains(query) ||
                 item.optString("description").lowercase().contains(query)
             ) {
-                filtered.put(item)
+                filtered.put(if (includeSchema) item else compactMcpTool(item))
             }
         }
         return JSONObject()
@@ -3562,17 +3782,69 @@ print(json.dumps({
             .put("available", true)
             .put("configured", true)
             .put("endpoint", endpoint)
+            .put("server", resolvedServer)
             .put("mode", "remote_mcp")
+            .put("progressive_loading", true)
+            .put("detail_tool", "mcp_tool_info")
+            .put("include_schema", includeSchema)
             .put("tool_count", filtered.length())
             .put("tools", filtered)
             .put("duration_ms", System.currentTimeMillis() - startedAt)
             .put("config", runtimeConfig.mcpConfigJson())
     }
 
-    private fun mcpCall(tool: String, arguments: JSONObject, timeoutMs: Int): JSONObject {
-        if (!runtimeConfig.mcpEnabled()) {
+    private fun mcpToolInfo(tool: String, serverId: String = "default"): JSONObject {
+        val resolvedServer = runtimeConfig.normalizeMcpServerId(serverId.ifBlank { runtimeConfig.mcpActiveServerId() })
+        val target = tool.trim()
+        if (target.isBlank()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "tool is required")
+        }
+        val listing = mcpTools(target, includeSchema = true, serverId = resolvedServer)
+        val tools = listing.optJSONArray("tools") ?: JSONArray()
+        for (index in 0 until tools.length()) {
+            val item = tools.optJSONObject(index) ?: continue
+            if (item.optString("name") == target) {
+                return JSONObject()
+                    .put("ok", true)
+                    .put("available", true)
+                    .put("server", resolvedServer)
+                    .put("endpoint", listing.optString("endpoint"))
+                    .put("tool", item)
+                    .put("config", runtimeConfig.mcpConfigJson())
+            }
+        }
+        return JSONObject()
+            .put("ok", false)
+            .put("available", listing.optBoolean("available", false))
+            .put("server", resolvedServer)
+            .put("error", "MCP tool not found: $target")
+            .put("matches", tools)
+            .put("config", runtimeConfig.mcpConfigJson())
+    }
+
+    private fun compactMcpTool(item: JSONObject): JSONObject {
+        val schema = item.optJSONObject("inputSchema") ?: item.optJSONObject("schema") ?: JSONObject()
+        val properties = schema.optJSONObject("properties") ?: JSONObject()
+        val argumentNames = JSONArray()
+        val keys = properties.keys()
+        while (keys.hasNext()) {
+            argumentNames.put(keys.next())
+        }
+        return JSONObject()
+            .put("name", item.optString("name"))
+            .put("description", item.optString("description"))
+            .put("argument_names", argumentNames)
+            .put("has_schema", schema.length() > 0)
+    }
+
+    private fun mcpCall(tool: String, arguments: JSONObject, timeoutMs: Int, serverId: String = "default"): JSONObject {
+        val resolvedServer = runtimeConfig.normalizeMcpServerId(serverId.ifBlank { runtimeConfig.mcpActiveServerId() })
+        if (!runtimeConfig.mcpServerEnabled(resolvedServer)) {
             return JSONObject()
                 .put("available", false)
+                .put("server", resolvedServer)
                 .put("error", "MCP backend is disabled")
                 .put("config", runtimeConfig.mcpConfigJson())
         }
@@ -3582,8 +3854,8 @@ print(json.dumps({
         }
         val safeTimeout = timeoutMs.coerceIn(1000, 300000)
         val startedAt = System.currentTimeMillis()
-        val endpoint = mcpEndpoint()
-        val sessionId = ensureMcpSession(endpoint, safeTimeout)
+        val endpoint = mcpEndpoint(resolvedServer)
+        val sessionId = ensureMcpSession(resolvedServer, endpoint, safeTimeout)
         val response = mcpPostJson(
             endpoint,
             JSONObject()
@@ -3598,17 +3870,808 @@ print(json.dumps({
                 )
                 .toString(),
             safeTimeout,
-            sessionId
+            sessionId,
+            runtimeConfig.mcpServerAuthToken(resolvedServer)
         )
         val result = parseMcpResult(response.first, "tools/call")
         return JSONObject()
             .put("ok", true)
+            .put("server", resolvedServer)
             .put("tool", targetTool)
             .put("endpoint", endpoint)
             .put("duration_ms", System.currentTimeMillis() - startedAt)
             .put("result", result)
             .put("session_id", response.second ?: "")
             .put("config", runtimeConfig.mcpConfigJson())
+    }
+
+    private fun sshConnect(arguments: JSONObject): JSONObject {
+        return sshBridge.connect(arguments)
+    }
+
+    private fun sshRun(arguments: JSONObject): JSONObject {
+        val command = arguments.optString("command")
+        val cwd = arguments.optString("cwd", "")
+        val shell = arguments.optString("shell", "powershell")
+        val timeout = arguments.optInt("timeout_ms", runtimeConfig.sshCommandTimeoutMs())
+        return sshBridge.run(command, cwd, shell, timeout)
+    }
+
+    private fun sshFilePush(arguments: JSONObject): JSONObject {
+        return sshBridge.push(
+            arguments.optString("local_path"),
+            arguments.optString("remote_path"),
+            arguments.optBoolean("overwrite", true)
+        )
+    }
+
+    private fun sshFilePull(arguments: JSONObject): JSONObject {
+        return sshBridge.pull(
+            arguments.optString("remote_path"),
+            arguments.optString("local_path", ""),
+            arguments.optBoolean("overwrite", true)
+        )
+    }
+
+    private fun pcBridgeStatus(arguments: JSONObject): JSONObject {
+        val ssh = sshBridge.status()
+        val diagnoseSsh = arguments.optBoolean("diagnose_ssh", true)
+        val sshDiagnostic = if (diagnoseSsh) {
+            val diagArgs = JSONObject()
+                .put("host", arguments.optString("ssh_host", ssh.optString("host")))
+                .put("port", arguments.optInt("ssh_port", ssh.optInt("port", 22)))
+                .put("timeout_ms", arguments.optInt("timeout_ms", 6000))
+            sshBridge.diagnose(diagArgs)
+        } else {
+            JSONObject().put("skipped", true)
+        }
+        val tailscaleHost = arguments.optString("tailscale_host", "").ifBlank {
+            if (arguments.optBoolean("check_tailscale", false)) findTailscaleHost(arguments.optJSONArray("hosts")) else ""
+        }
+        val tailscalePreflight = if (tailscaleHost.isNotBlank()) {
+            tailscalePreflight(
+                JSONObject()
+                    .put("host", tailscaleHost)
+                    .put("port", arguments.optInt("ssh_port", 22))
+                    .put("timeout_ms", arguments.optInt("timeout_ms", 6000))
+                    .put("open_app_if_needed", false)
+                    .put("apply_if_ok", false)
+            )
+        } else {
+            JSONObject().put("skipped", true)
+        }
+        val mcp = mcpRuntimeStatus(force = false)
+        val sshUsable = ssh.optBoolean("connected", false) || sshDiagnostic.optString("status") == "ssh_banner_ok"
+        val mcpUsable = mcp.optString("state") == "ok" || mcp.optBoolean("ok", false)
+        val recommendation = when {
+            tailscalePreflight.optString("status") == "tailscale_not_connected_or_unreachable" ->
+                "Remote Tailscale SSH is not ready. Open Tailscale on the phone, connect VPN, then retry tailscale_preflight or pc_bridge_recover."
+            sshUsable && mcpUsable -> "SSH and MCP are both usable. Use SSH for backend commands/files and MCP for foreground GUI/Windows tools."
+            sshUsable -> "SSH is usable. Use ssh_connect/ssh_run/file_push/file_pull; use SSH to inspect or restart MCP if needed."
+            mcpUsable -> "MCP is usable but SSH is not confirmed. Use MCP for foreground tools and run ssh_diagnose before backend repair."
+            else -> "Neither SSH nor MCP is confirmed. Run ssh_select_host or ssh_diagnose, then check MCP service configuration."
+        }
+        return JSONObject()
+            .put("ok", true)
+            .put("ssh", ssh)
+            .put("ssh_diagnostic", sshDiagnostic)
+            .put("tailscale_preflight", tailscalePreflight)
+            .put("mcp", mcp)
+            .put("ssh_usable", sshUsable)
+            .put("mcp_usable", mcpUsable)
+            .put("recommendation", recommendation)
+    }
+
+    private fun pcBridgeRecover(arguments: JSONObject): JSONObject {
+        val steps = JSONArray()
+        val before = pcBridgeStatus(
+            JSONObject()
+                .put("diagnose_ssh", arguments.optBoolean("diagnose_ssh", true))
+                .put("timeout_ms", arguments.optInt("timeout_ms", 6000))
+        )
+        steps.put(JSONObject().put("step", "before_status").put("result", before))
+
+        val hosts = arguments.optJSONArray("hosts") ?: arguments.optJSONArray("candidates")
+        val tailscaleHost = arguments.optString("tailscale_host", "").ifBlank { findTailscaleHost(hosts) }
+        if (tailscaleHost.isNotBlank()) {
+            val preflight = tailscalePreflight(
+                JSONObject()
+                    .put("host", tailscaleHost)
+                    .put("port", arguments.optInt("ssh_port", 22))
+                    .put("timeout_ms", arguments.optInt("timeout_ms", 6000))
+                    .put("open_app_if_needed", arguments.optBoolean("open_tailscale_if_needed", true))
+                    .put("apply_if_ok", arguments.optBoolean("prefer_tailscale", false))
+            )
+            steps.put(JSONObject().put("step", "tailscale_preflight").put("result", preflight))
+            if (preflight.optString("status") == "tailscale_not_connected_or_unreachable" && hosts?.length() == 1) {
+                return JSONObject()
+                    .put("ok", false)
+                    .put("status", "tailscale_not_connected")
+                    .put("steps", steps)
+                    .put("ssh_usable", false)
+                    .put("mcp_usable", false)
+                    .put("hint", "Tailscale SSH is not reachable from the phone. Tailscale was opened if possible; connect it on the phone, then retry pc_bridge_recover.")
+            }
+        }
+        if (hosts != null && hosts.length() > 0) {
+            val selected = sshBridge.selectHost(
+                JSONObject()
+                    .put("hosts", hosts)
+                    .put("port", arguments.optInt("ssh_port", 22))
+                    .put("timeout_ms", arguments.optInt("timeout_ms", 6000))
+                    .put("apply", true)
+            )
+            steps.put(JSONObject().put("step", "ssh_select_host").put("result", selected))
+        }
+
+        val endpoint = arguments.optString("mcp_endpoint", runtimeConfig.mcpBaseUrl()).ifBlank { runtimeConfig.mcpBaseUrl() }
+        val timeoutMs = arguments.optInt("command_timeout_ms", runtimeConfig.sshCommandTimeoutMs()).coerceIn(5_000, 300_000)
+        val useSshTunnel = arguments.optBoolean("use_ssh_tunnel", true)
+        var effectiveEndpoint = endpoint
+        val parsedEndpoint = parseEndpoint(endpoint)
+        val localPort = arguments.optInt("local_forward_port", 18000).coerceIn(1024, 65535)
+        val remoteHost = arguments.optString("remote_forward_host", "127.0.0.1").ifBlank { "127.0.0.1" }
+        val remotePort = arguments.optInt(
+            "remote_forward_port",
+            arguments.optInt("remote_port", parsedEndpoint.first)
+        ).coerceIn(1, 65535)
+        val remoteEndpoint = arguments.optString(
+            "remote_mcp_endpoint",
+            "http://$remoteHost:$remotePort${parsedEndpoint.third}"
+        ).ifBlank { "http://$remoteHost:$remotePort${parsedEndpoint.third}" }
+
+        val connect = sshBridge.connect(JSONObject())
+        steps.put(JSONObject().put("step", "ssh_connect").put("result", connect))
+        if (!connect.optBoolean("ok", false)) {
+            val terminalFallback = pcBridgeTerminalForwardFallback(
+                arguments = arguments,
+                endpoint = endpoint,
+                localPort = localPort,
+                remoteHost = remoteHost,
+                remotePort = remotePort
+            )
+            steps.put(JSONObject().put("step", "terminal_ssh_forward_fallback").put("result", terminalFallback))
+            val fallbackOk = terminalFallback.optBoolean("ok", false)
+            return JSONObject()
+                .put("ok", fallbackOk)
+                .put("status", if (fallbackOk) "mcp_recovered_by_terminal_ssh" else "ssh_unavailable")
+                .put("steps", steps)
+                .put("error", connect.optString("error"))
+                .put(
+                    "hint",
+                    if (fallbackOk) {
+                        "Native SSH failed, but the Termux terminal fallback opened the MCP tunnel. Continue with mcp_tools and mcp_call."
+                    } else {
+                        "Native SSH could not be established, and terminal SSH fallback also failed or was unavailable. Check Tailscale, Termux openssh/key setup, then retry pc_bridge_recover."
+                    }
+                )
+        }
+        if (useSshTunnel) {
+            val forward = sshBridge.startLocalForward(
+                JSONObject()
+                    .put("local_port", localPort)
+                    .put("remote_host", remoteHost)
+                    .put("remote_port", remotePort)
+            )
+            steps.put(JSONObject().put("step", "ssh_forward_start").put("result", forward))
+            if (forward.optBoolean("ok", false)) {
+                effectiveEndpoint = "http://127.0.0.1:$localPort${parsedEndpoint.third}"
+                setMcpConfig(true, effectiveEndpoint, runtimeConfig.mcpAuthToken())
+                steps.put(
+                    JSONObject()
+                        .put("step", "mcp_endpoint_tunnel_configure")
+                        .put("result", JSONObject().put("endpoint", effectiveEndpoint).put("ok", true))
+                )
+            } else {
+                val terminalFallback = pcBridgeTerminalForwardFallback(
+                    arguments = arguments,
+                    endpoint = endpoint,
+                    localPort = localPort,
+                    remoteHost = remoteHost,
+                    remotePort = remotePort
+                )
+                steps.put(JSONObject().put("step", "terminal_ssh_forward_fallback").put("result", terminalFallback))
+                if (terminalFallback.optBoolean("ok", false)) {
+                    effectiveEndpoint = "http://127.0.0.1:$localPort${parsedEndpoint.third}"
+                }
+            }
+        }
+        val authSync = syncMcpAuthFromSsh(arguments, effectiveEndpoint, timeoutMs)
+        if (authSync.length() > 0) {
+            steps.put(JSONObject().put("step", "mcp_auth_sync").put("result", authSync))
+        }
+        val diagnose = sshBridge.run(buildMcpDiagnosticScript(remoteEndpoint), shell = "powershell", timeoutMs = timeoutMs)
+        steps.put(JSONObject().put("step", "mcp_remote_diagnose").put("result", diagnose))
+
+        val killPortProcess = arguments.optBoolean("kill_port_process", false)
+        val restartCommand = arguments.optString("restart_command", arguments.optString("start_command", "")).trim()
+        if (killPortProcess || restartCommand.isNotBlank()) {
+            mcpSessions.clear()
+            if (killPortProcess) {
+                val kill = sshBridge.run(buildKillMcpPortScript(remoteEndpoint), shell = "powershell", timeoutMs = timeoutMs)
+                steps.put(JSONObject().put("step", "kill_mcp_port_process").put("result", kill))
+            }
+            if (restartCommand.isNotBlank()) {
+                val restart = sshBridge.run(restartCommand, shell = arguments.optString("shell", "powershell"), timeoutMs = timeoutMs)
+                steps.put(JSONObject().put("step", "restart_mcp").put("result", restart))
+            }
+            val waitMs = arguments.optInt("wait_ms", 2500).coerceIn(0, 30_000)
+            if (waitMs > 0) Thread.sleep(waitMs.toLong())
+        }
+
+        val remoteAfter = sshBridge.run(buildMcpDiagnosticScript(remoteEndpoint), shell = "powershell", timeoutMs = timeoutMs)
+        steps.put(JSONObject().put("step", "mcp_remote_after").put("result", remoteAfter))
+        val after = pcBridgeStatus(JSONObject().put("diagnose_ssh", false))
+        steps.put(JSONObject().put("step", "after_status").put("result", after))
+
+        val mcpUsable = after.optBoolean("mcp_usable", false)
+        val restarted = restartCommand.isNotBlank() || killPortProcess
+        return JSONObject()
+            .put("ok", mcpUsable || connect.optBoolean("ok", false))
+            .put("status", when {
+                mcpUsable -> "mcp_recovered"
+                restarted -> "repair_attempted_mcp_still_unhealthy"
+                else -> "diagnosed_restart_command_required"
+            })
+            .put("mcp_usable", mcpUsable)
+            .put("ssh_usable", after.optBoolean("ssh_usable", true))
+            .put("endpoint", endpoint)
+            .put("effective_endpoint", effectiveEndpoint)
+            .put("steps", steps)
+            .put(
+                "hint",
+                if (mcpUsable) {
+                    "MCP is reachable again. Continue with mcp_tools and mcp_call."
+                } else if (restartCommand.isBlank()) {
+                    "MCP is still unhealthy. Provide restart_command or let the agent inspect the remote diagnostics and derive the exact command."
+                } else {
+                    "Restart was attempted but MCP is still unhealthy. Inspect mcp_remote_after stdout/stderr for the next repair step."
+                }
+            )
+    }
+
+    private fun pcBridgeTerminalForwardFallback(
+        arguments: JSONObject,
+        endpoint: String,
+        localPort: Int,
+        remoteHost: String,
+        remotePort: Int
+    ): JSONObject {
+        val enabled = arguments.optBoolean(
+            "terminal_fallback",
+            arguments.optBoolean("allow_terminal_fallback", true)
+        )
+        if (!enabled) {
+            return JSONObject()
+                .put("ok", false)
+                .put("skipped", true)
+                .put("reason", "terminal_fallback is disabled")
+        }
+
+        val steps = JSONArray()
+        val runtime = terminalRuntimeStatus(autoRecover = true, force = true)
+        steps.put(JSONObject().put("step", "terminal_runtime").put("result", runtime))
+        if (runtime.optString("state") != "ok" && !runtime.optBoolean("available", false)) {
+            return JSONObject()
+                .put("ok", false)
+                .put("status", "terminal_unavailable")
+                .put("steps", steps)
+                .put("hint", "Termux terminal backend is not available, so terminal SSH fallback cannot run.")
+        }
+
+        val host = arguments.optString("terminal_ssh_host", runtimeConfig.sshHost()).ifBlank { runtimeConfig.sshHost() }
+        val user = arguments.optString("terminal_ssh_user", runtimeConfig.sshUser()).ifBlank { runtimeConfig.sshUser() }
+        val port = arguments.optInt("terminal_ssh_port", runtimeConfig.sshPort()).coerceIn(1, 65535)
+        if (host.isBlank()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("status", "terminal_ssh_host_missing")
+                .put("steps", steps)
+                .put("hint", "No SSH host is configured for terminal fallback.")
+        }
+
+        val sshVersion = terminalRun("ssh -V", "", 10)
+        steps.put(JSONObject().put("step", "terminal_ssh_probe").put("result", sshVersion))
+        val versionResult = sshVersion.optJSONObject("result")
+        val versionOk = sshVersion.optBoolean("ok", false) ||
+            versionResult?.optInt("returncode", -1) == 0 ||
+            versionResult?.optString("stderr", "")?.contains("OpenSSH", ignoreCase = true) == true
+        if (!versionOk) {
+            return JSONObject()
+                .put("ok", false)
+                .put("status", "terminal_openssh_missing")
+                .put("steps", steps)
+                .put("hint", "Termux is reachable but openssh is missing or not runnable. Install openssh in Termux and configure key auth.")
+        }
+
+        val target = if (user.isBlank()) host else "$user@$host"
+        val identityPath = arguments.optString("terminal_identity_path", "").trim()
+        val identityArg = if (identityPath.isBlank()) "" else "-i ${shellQuote(identityPath)} "
+        val endpointPath = parseEndpoint(endpoint).third
+        val effectiveEndpoint = "http://127.0.0.1:$localPort$endpointPath"
+        val pidFile = ".mobile-agent/pc-bridge/mcp-ssh-forward-$localPort.pid"
+        val logFile = ".mobile-agent/pc-bridge/mcp-ssh-forward-$localPort.log"
+        val sshCommand = "ssh -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 " +
+            "-o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new " +
+            "-p $port ${identityArg}-N -L 127.0.0.1:$localPort:$remoteHost:$remotePort ${shellQuote(target)}"
+        val script = """
+set -eu
+mkdir -p .mobile-agent/pc-bridge
+PID_FILE=${shellQuote(pidFile)}
+LOG_FILE=${shellQuote(logFile)}
+if [ -f "${'$'}PID_FILE" ]; then
+  OLD_PID="$(cat "${'$'}PID_FILE" 2>/dev/null || true)"
+  if [ -n "${'$'}OLD_PID" ] && kill -0 "${'$'}OLD_PID" 2>/dev/null; then
+    echo "already_running pid=${'$'}OLD_PID"
+    exit 0
+  fi
+fi
+nohup $sshCommand > "${'$'}LOG_FILE" 2>&1 &
+PID="${'$'}!"
+echo "${'$'}PID" > "${'$'}PID_FILE"
+sleep 2
+if kill -0 "${'$'}PID" 2>/dev/null; then
+  echo "started pid=${'$'}PID"
+  exit 0
+fi
+echo "ssh_forward_exited"
+cat "${'$'}LOG_FILE" 2>/dev/null || true
+exit 1
+""".trimIndent()
+        val started = terminalScript(
+            JSONObject()
+                .put("script", script)
+                .put("interpreter", "sh")
+                .put("timeout", arguments.optInt("terminal_fallback_timeout", 30).coerceIn(5, 120))
+                .put("wait", true)
+                .put("max_output_chars", 12000)
+                .put("name", "mcp-ssh-forward-fallback")
+        )
+        steps.put(JSONObject().put("step", "terminal_forward_start").put("result", started))
+        val startedResult = started.optJSONObject("result")
+        val startedOk = started.optBoolean("ok", false) || startedResult?.optInt("returncode", -1) == 0
+        if (!startedOk) {
+            return JSONObject()
+                .put("ok", false)
+                .put("status", "terminal_forward_failed")
+                .put("endpoint", effectiveEndpoint)
+                .put("steps", steps)
+                .put("hint", "Termux SSH fallback failed. The usual cause is missing Termux SSH key/config for the Windows host.")
+        }
+
+        setMcpConfig(true, effectiveEndpoint, runtimeConfig.mcpAuthToken())
+        val mcp = mcpRuntimeStatus(force = true)
+        steps.put(JSONObject().put("step", "mcp_verify_after_terminal_forward").put("result", mcp))
+        val mcpOk = mcp.optString("state") == "ok" || mcp.optBoolean("available", false)
+        return JSONObject()
+            .put("ok", mcpOk)
+            .put("status", if (mcpOk) "mcp_recovered_by_terminal_ssh" else "terminal_forward_started_mcp_unhealthy")
+            .put("endpoint", effectiveEndpoint)
+            .put("host", host)
+            .put("port", port)
+            .put("user", user)
+            .put("local_port", localPort)
+            .put("remote_host", remoteHost)
+            .put("remote_port", remotePort)
+            .put("steps", steps)
+    }
+
+    private fun shellQuote(value: String): String {
+        return "'" + value.replace("'", "'\"'\"'") + "'"
+    }
+
+    private fun syncMcpAuthFromSsh(arguments: JSONObject, endpoint: String, timeoutMs: Int): JSONObject {
+        val explicitToken = arguments.optString("auth_token", "").trim()
+        val tokenPath = arguments.optString(
+            "auth_token_path",
+            "D:\\codex\\mobile-agent-project\\tools\\windows-mcp\\.runtime-auth-token.txt"
+        ).trim()
+        val tokenCommand = arguments.optString("auth_token_command", "").trim()
+        val shouldSync = arguments.optBoolean(
+            "sync_auth_token",
+            explicitToken.isNotBlank() || tokenCommand.isNotBlank() || tokenPath.isNotBlank()
+        )
+        if (!shouldSync) return JSONObject()
+        val token = when {
+            explicitToken.isNotBlank() -> explicitToken
+            tokenCommand.isNotBlank() -> {
+                val result = sshBridge.run(tokenCommand, shell = "powershell", timeoutMs = timeoutMs)
+                if (!result.optBoolean("ok", false)) {
+                    return JSONObject()
+                        .put("ok", false)
+                        .put("status", "auth_token_command_failed")
+                        .put("result", result)
+                }
+                result.optJSONObject("result")?.optString("stdout", "").orEmpty().trim()
+            }
+            tokenPath.isNotBlank() -> {
+                val command = "if (Test-Path -LiteralPath '${tokenPath.replace("'", "''")}') { Get-Content -Raw -LiteralPath '${tokenPath.replace("'", "''")}' }"
+                val result = sshBridge.run(command, shell = "powershell", timeoutMs = timeoutMs)
+                if (!result.optBoolean("ok", false)) {
+                    return JSONObject()
+                        .put("ok", false)
+                        .put("status", "auth_token_read_failed")
+                        .put("path", tokenPath)
+                        .put("result", result)
+                }
+                result.optJSONObject("result")?.optString("stdout", "").orEmpty().trim()
+            }
+            else -> ""
+        }
+        if (token.isBlank()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("status", "auth_token_empty")
+                .put("path", tokenPath)
+        }
+        setMcpConfig(true, endpoint, token)
+        return JSONObject()
+            .put("ok", true)
+            .put("status", "synced")
+            .put("endpoint", runtimeConfig.mcpBaseUrl())
+            .put("has_auth_token", runtimeConfig.mcpAuthToken().isNotBlank())
+            .put("token_source", when {
+                explicitToken.isNotBlank() -> "argument"
+                tokenCommand.isNotBlank() -> "command"
+                else -> "path"
+            })
+            .put("path", if (explicitToken.isBlank() && tokenCommand.isBlank()) tokenPath else "")
+    }
+
+    private fun tailscalePreflight(arguments: JSONObject): JSONObject {
+        val host = arguments.optString("host", arguments.optString("tailscale_host", "")).trim()
+        val port = arguments.optInt("port", 22).coerceIn(1, 65535)
+        val timeoutMs = arguments.optInt("timeout_ms", 6000).coerceIn(1000, 30000)
+        val openIfNeeded = arguments.optBoolean("open_app_if_needed", true)
+        val applyIfOk = arguments.optBoolean("apply_if_ok", false)
+        val steps = JSONArray()
+        if (host.isBlank()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("status", "missing_tailscale_host")
+                .put("error", "host or tailscale_host is required")
+                .put("hint", "Pass the PC Tailscale IPv4 address, for example 100.113.120.40.")
+        }
+
+        val diag = sshBridge.diagnose(
+            JSONObject()
+                .put("host", host)
+                .put("port", port)
+                .put("timeout_ms", timeoutMs)
+        )
+        steps.put(JSONObject().put("step", "phone_to_tailscale_ssh_banner").put("result", diag))
+        if (diag.optString("status") == "ssh_banner_ok") {
+            val applied = if (applyIfOk) {
+                sshBridge.selectHost(
+                    JSONObject()
+                        .put("hosts", JSONArray().put(host))
+                        .put("port", port)
+                        .put("timeout_ms", timeoutMs)
+                        .put("apply", true)
+                )
+            } else {
+                JSONObject().put("skipped", true)
+            }
+            if (applyIfOk) steps.put(JSONObject().put("step", "apply_tailscale_host").put("result", applied))
+            return JSONObject()
+                .put("ok", true)
+                .put("status", "tailscale_ready")
+                .put("host", host)
+                .put("port", port)
+                .put("diagnostic", diag)
+                .put("steps", steps)
+                .put("ssh_banner", diag.optString("banner"))
+                .put("hint", "Tailscale SSH is reachable. Use this host for remote PC work when the phone is away from the LAN.")
+        }
+
+        val appPackage = arguments.optString("package", "com.tailscale.ipn").ifBlank { "com.tailscale.ipn" }
+        val installed = context.packageManager.getLaunchIntentForPackage(appPackage) != null
+        var opened = JSONObject().put("skipped", true)
+        if (openIfNeeded && installed) {
+            opened = runCatching { openApp(appPackage) }.getOrElse {
+                JSONObject()
+                    .put("ok", false)
+                    .put("package", appPackage)
+                    .put("error", it.message ?: it.javaClass.simpleName)
+            }
+            steps.put(JSONObject().put("step", "open_tailscale_app").put("result", opened))
+        }
+
+        return JSONObject()
+            .put("ok", false)
+            .put("status", "tailscale_not_connected_or_unreachable")
+            .put("host", host)
+            .put("port", port)
+            .put("tailscale_package", appPackage)
+            .put("tailscale_installed", installed)
+            .put("opened_tailscale", opened.optBoolean("ok", false))
+            .put("diagnostic", diag)
+            .put("steps", steps)
+            .put(
+                "hint",
+                if (!installed) {
+                    "Tailscale is not installed or is not visible to this app. Install/open Tailscale, sign in, and connect VPN."
+                } else if (opened.optBoolean("ok", false)) {
+                    "Tailscale SSH is not reachable. The Tailscale app was opened; connect VPN on the phone, then retry."
+                } else {
+                    "Tailscale SSH is not reachable. Open Tailscale on the phone, connect VPN, then retry."
+                }
+            )
+    }
+
+    private fun findTailscaleHost(hosts: JSONArray?): String {
+        if (hosts == null) return ""
+        for (i in 0 until hosts.length()) {
+            val host = hosts.optString(i).trim()
+            if (host.startsWith("100.")) return host
+        }
+        return ""
+    }
+
+    private fun tailscaleSshDiagnose(arguments: JSONObject): JSONObject {
+        val tailscaleHost = arguments.optString("host", arguments.optString("tailscale_host", "")).trim()
+        val port = arguments.optInt("port", 22).coerceIn(1, 65535)
+        val timeoutMs = arguments.optInt("timeout_ms", 6000).coerceIn(1000, 30000)
+        val steps = JSONArray()
+        if (tailscaleHost.isNotBlank()) {
+            val phoneDiag = sshBridge.diagnose(
+                JSONObject()
+                    .put("host", tailscaleHost)
+                    .put("port", port)
+                    .put("timeout_ms", timeoutMs)
+            )
+            steps.put(JSONObject().put("step", "phone_to_tailscale_ssh").put("result", phoneDiag))
+        }
+        val connect = sshBridge.connect(JSONObject())
+        steps.put(JSONObject().put("step", "ssh_connect_current_host").put("result", connect))
+        if (!connect.optBoolean("ok", false)) {
+            return JSONObject()
+                .put("ok", false)
+                .put("status", "current_ssh_unavailable")
+                .put("steps", steps)
+                .put("hint", "Current SSH host is unavailable, so Windows-side Tailscale/sshd checks cannot run.")
+        }
+
+        val tryFix = arguments.optBoolean("try_fix", false)
+        val script = buildTailscaleSshDiagnosticScript(port, tryFix)
+        val remoteDiag = sshBridge.run(script, shell = "powershell", timeoutMs = arguments.optInt("command_timeout_ms", 90000))
+        steps.put(JSONObject().put("step", if (tryFix) "windows_tailscale_ssh_diagnose_and_fix" else "windows_tailscale_ssh_diagnose").put("result", remoteDiag))
+        val after = if (tailscaleHost.isNotBlank()) {
+            sshBridge.diagnose(
+                JSONObject()
+                    .put("host", tailscaleHost)
+                    .put("port", port)
+                    .put("timeout_ms", timeoutMs)
+            )
+        } else {
+            JSONObject().put("skipped", true)
+        }
+        steps.put(JSONObject().put("step", "phone_to_tailscale_after").put("result", after))
+        return JSONObject()
+            .put("ok", after.optString("status") == "ssh_banner_ok" || remoteDiag.optBoolean("ok", false))
+            .put("status", if (after.optString("status") == "ssh_banner_ok") "tailscale_ssh_ok" else "diagnosed")
+            .put("steps", steps)
+            .put("hint", "If TCP connects but no SSH banner appears, inspect Windows sshd ListenAddress, firewall rules, and Tailscale serve/funnel state from the remote diagnostic output.")
+    }
+
+    private fun pcFileWorkflow(arguments: JSONObject): JSONObject {
+        val direction = arguments.optString("direction", "phone_to_pc").ifBlank { "phone_to_pc" }
+        val steps = JSONArray()
+        val storage = storagePermissionStatus()
+        steps.put(JSONObject().put("step", "storage_permission_status").put("result", storage))
+        val connect = sshBridge.connect(JSONObject())
+        steps.put(JSONObject().put("step", "ssh_connect").put("result", connect))
+        if (!connect.optBoolean("ok", false)) {
+            return JSONObject()
+                .put("ok", false)
+                .put("status", "ssh_unavailable")
+                .put("steps", steps)
+                .put("error", connect.optString("error"))
+        }
+
+        var transferredPath = ""
+        when (direction) {
+            "phone_to_pc", "upload" -> {
+                val localPath = arguments.optString("local_path")
+                val remotePath = arguments.optString("remote_path")
+                val pushed = sshBridge.push(localPath, remotePath, arguments.optBoolean("overwrite", true))
+                steps.put(JSONObject().put("step", "file_push").put("result", pushed))
+                transferredPath = remotePath
+                if (!pushed.optBoolean("ok", false)) {
+                    return JSONObject().put("ok", false).put("status", "push_failed").put("steps", steps)
+                }
+            }
+            "pc_to_phone", "download" -> {
+                val remotePath = arguments.optString("remote_path")
+                val localPath = arguments.optString("local_path", "")
+                val pulled = sshBridge.pull(remotePath, localPath, arguments.optBoolean("overwrite", true))
+                steps.put(JSONObject().put("step", "file_pull").put("result", pulled))
+                transferredPath = pulled.optJSONObject("result")?.optString("local_path").orEmpty()
+                if (!pulled.optBoolean("ok", false)) {
+                    return JSONObject().put("ok", false).put("status", "pull_failed").put("steps", steps)
+                }
+            }
+            else -> return JSONObject()
+                .put("ok", false)
+                .put("status", "bad_direction")
+                .put("error", "direction must be phone_to_pc/upload or pc_to_phone/download")
+                .put("steps", steps)
+        }
+
+        val processCommand = arguments.optString("process_command", "").trim()
+        if (processCommand.isNotBlank()) {
+            val command = processCommand
+                .replace("{remote_path}", arguments.optString("remote_path"))
+                .replace("{local_path}", arguments.optString("local_path", ""))
+            val processed = sshBridge.run(
+                command,
+                cwd = arguments.optString("cwd", ""),
+                shell = arguments.optString("shell", "powershell"),
+                timeoutMs = arguments.optInt("timeout_ms", runtimeConfig.sshCommandTimeoutMs())
+            )
+            steps.put(JSONObject().put("step", "process_on_pc").put("result", processed))
+            if (!processed.optBoolean("ok", false) && arguments.optBoolean("fail_on_process_error", true)) {
+                return JSONObject().put("ok", false).put("status", "process_failed").put("steps", steps)
+            }
+        }
+
+        val resultRemotePath = arguments.optString("result_remote_path", "").trim()
+        if (resultRemotePath.isNotBlank()) {
+            val resultLocalPath = arguments.optString("result_local_path", "")
+            val pulled = sshBridge.pull(resultRemotePath, resultLocalPath, arguments.optBoolean("overwrite", true))
+            steps.put(JSONObject().put("step", "result_pull").put("result", pulled))
+            if (!pulled.optBoolean("ok", false)) {
+                return JSONObject().put("ok", false).put("status", "result_pull_failed").put("steps", steps)
+            }
+        }
+
+        return JSONObject()
+            .put("ok", true)
+            .put("status", "completed")
+            .put("direction", direction)
+            .put("transferred_path", transferredPath)
+            .put("steps", steps)
+            .put("hint", "Use this workflow for phone files such as shared_storage:/Download/... then process them on the PC and optionally pull results back.")
+    }
+
+    private fun buildMcpDiagnosticScript(endpoint: String): String {
+        val parsed = parseEndpoint(endpoint)
+        return """
+${'$'}ErrorActionPreference = 'Continue'
+${'$'}ProgressPreference = 'SilentlyContinue'
+${'$'}endpoint = '${endpoint.replace("'", "''")}'
+${'$'}localEndpoint = '${parsed.second.replace("'", "''")}'
+${'$'}port = ${parsed.first}
+Write-Output "endpoint=${'$'}endpoint"
+Write-Output "local_endpoint=${'$'}localEndpoint"
+Write-Output "--- tcp port ---"
+Get-NetTCPConnection -LocalPort ${'$'}port -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,State,OwningProcess | Format-List | Out-String -Width 4096
+Write-Output "--- processes on port ---"
+${'$'}processIds = @(Get-NetTCPConnection -LocalPort ${'$'}port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
+foreach (${'$'}processId in ${'$'}processIds) {
+  Get-Process -Id ${'$'}processId -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Path,StartTime | Format-List | Out-String -Width 4096
+}
+Write-Output "--- likely mcp processes ---"
+Get-CimInstance Win32_Process | Where-Object { ${'$'}_.CommandLine -match 'mcp|modelcontext|playwright-mcp|windows-mcp|@modelcontextprotocol|npx .*mcp|uv .*mcp|python .*mcp' } | Select-Object -First 20 ProcessId,Name,CommandLine | Format-List | Out-String -Width 4096
+Write-Output "--- tailscale serve ---"
+try { tailscale serve status } catch { Write-Output ("tailscale serve status failed: " + ${'$'}_.Exception.Message) }
+Write-Output "--- tailscale funnel ---"
+try { tailscale funnel status } catch { Write-Output ("tailscale funnel status failed: " + ${'$'}_.Exception.Message) }
+Write-Output "--- http probe ---"
+try {
+  ${'$'}body = '{"jsonrpc":"2.0","id":"mobile-agent-probe","method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mobile-agent-ssh-probe","version":"0.1.0"}}}'
+  ${'$'}response = Invoke-WebRequest -Uri ${'$'}localEndpoint -Method Post -ContentType 'application/json' -Headers @{Accept='application/json, text/event-stream'} -Body ${'$'}body -TimeoutSec 8
+  Write-Output ("HTTP " + [int]${'$'}response.StatusCode)
+  Write-Output ${'$'}response.Content
+} catch {
+  Write-Output ("HTTP_PROBE_ERROR " + ${'$'}_.Exception.GetType().Name + ": " + ${'$'}_.Exception.Message)
+  if (${'$'}_.Exception.Response) { Write-Output ("HTTP_STATUS " + [int]${'$'}_.Exception.Response.StatusCode) }
+}
+""".trimIndent()
+    }
+
+    private fun buildKillMcpPortScript(endpoint: String): String {
+        val port = parseEndpoint(endpoint).first
+        return """
+${'$'}ErrorActionPreference = 'Continue'
+${'$'}processIds = @(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
+foreach (${'$'}processId in ${'$'}processIds) {
+  Write-Output "Stopping PID ${'$'}processId on port $port"
+  Stop-Process -Id ${'$'}processId -Force -ErrorAction Continue
+}
+Start-Sleep -Milliseconds 500
+Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,State,OwningProcess | Format-List | Out-String -Width 4096
+""".trimIndent()
+    }
+
+    private fun buildTailscaleSshDiagnosticScript(port: Int, tryFix: Boolean): String {
+        val fixBlock = if (tryFix) {
+            """
+Write-Output "--- try fix sshd/firewall ---"
+try { Set-Service sshd -StartupType Automatic -ErrorAction Continue } catch { Write-Output ("Set-Service failed: " + ${'$'}_.Exception.Message) }
+try { Start-Service sshd -ErrorAction Continue } catch { Write-Output ("Start-Service failed: " + ${'$'}_.Exception.Message) }
+try {
+  if (-not (Get-NetFirewallRule -DisplayName 'Mobile Agent SSH' -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -DisplayName 'Mobile Agent SSH' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -ErrorAction Continue | Out-String -Width 4096
+  }
+} catch { Write-Output ("Firewall rule failed: " + ${'$'}_.Exception.Message) }
+""".trimIndent()
+        } else {
+            ""
+        }
+        return """
+${'$'}ErrorActionPreference = 'Continue'
+Write-Output "--- sshd service ---"
+Get-Service sshd -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | Format-List | Out-String -Width 4096
+Write-Output "--- ssh port ---"
+Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,State,OwningProcess | Format-List | Out-String -Width 4096
+Write-Output "--- ssh process ---"
+${'$'}processIds = @(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
+foreach (${'$'}processId in ${'$'}processIds) {
+  Get-Process -Id ${'$'}processId -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Path,StartTime | Format-List | Out-String -Width 4096
+}
+Write-Output "--- firewall ssh rules ---"
+Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { ${'$'}_.DisplayName -match 'ssh|OpenSSH|Mobile Agent' } | Select-Object DisplayName,Enabled,Direction,Action,Profile | Format-Table -AutoSize | Out-String -Width 4096
+Write-Output "--- tailscale status ---"
+try { tailscale status } catch { Write-Output ("tailscale status failed: " + ${'$'}_.Exception.Message) }
+Write-Output "--- tailscale ip ---"
+try { tailscale ip -4 } catch { Write-Output ("tailscale ip failed: " + ${'$'}_.Exception.Message) }
+Write-Output "--- local ip addresses ---"
+Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object InterfaceAlias,IPAddress,PrefixLength | Format-Table -AutoSize | Out-String -Width 4096
+$fixBlock
+Write-Output "--- after sshd service ---"
+Get-Service sshd -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | Format-List | Out-String -Width 4096
+""".trimIndent()
+    }
+
+    private fun parseEndpoint(endpoint: String): Triple<Int, String, String> {
+        return runCatching {
+            val url = URL(endpoint)
+            val port = if (url.port > 0) url.port else url.defaultPort
+            val path = if (url.path.isNullOrBlank()) "/" else url.path
+            val query = if (url.query.isNullOrBlank()) "" else "?${url.query}"
+            Triple(port, "${url.protocol}://127.0.0.1:$port$path$query", "$path$query")
+        }.getOrElse {
+            Triple(8931, endpoint, "/mcp")
+        }
+    }
+
+    private fun storagePermissionStatus(): JSONObject {
+        val allFilesAccess = Environment.isExternalStorageManager()
+        val sharedRoot = Environment.getExternalStorageDirectory()
+        return JSONObject()
+            .put("ok", true)
+            .put("all_files_access", allFilesAccess)
+            .put("shared_storage_root", sharedRoot.absolutePath)
+            .put("download_alias", "shared_storage:/Download/")
+            .put("can_read_download", runCatching { sharedRoot.resolve("Download").canRead() }.getOrDefault(false))
+            .put(
+                "status",
+                if (allFilesAccess) "granted" else "needs_all_files_access"
+            )
+            .put(
+                "hint",
+                if (allFilesAccess) "shared_storage:/ paths can be used for Download/WeChat-exported files."
+                else "Open Android file access settings for Mobile Agent Host and allow all files access before using shared_storage:/Download files."
+            )
+    }
+
+    private fun openStoragePermissionSettings(): JSONObject {
+        val packageUri = Uri.parse("package:${context.packageName}")
+        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, packageUri)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val opened = runCatching {
+            context.startActivity(intent)
+            true
+        }.getOrElse {
+            val fallback = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(fallback)
+            true
+        }
+        return storagePermissionStatus()
+            .put("opened_settings", opened)
+            .put("settings_action", "ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION")
     }
 
     private fun mcpRuntimeStatus(force: Boolean): JSONObject {
@@ -3628,21 +4691,23 @@ print(json.dumps({
             .put("status", status)
     }
 
-    private fun ensureMcpSession(endpoint: String, timeoutMs: Int): String? {
-        val existing = mcpSessions[endpoint]
+    private fun ensureMcpSession(serverId: String, endpoint: String, timeoutMs: Int): String? {
+        val sessionKey = "$serverId|$endpoint"
+        val existing = mcpSessions[sessionKey]
         if (existing != null && existing.isNotBlank()) {
             return existing
         }
-        return runCatching { initializeMcpSession(endpoint, timeoutMs) }.getOrElse {
+        return runCatching { initializeMcpSession(serverId, endpoint, timeoutMs) }.getOrElse {
             if (it.message?.contains("already initialized", ignoreCase = true) == true) {
-                mcpSessions[endpoint]
+                mcpSessions[sessionKey]
             } else {
                 throw it
             }
         }
     }
 
-    private fun initializeMcpSession(endpoint: String, timeoutMs: Int): String? {
+    private fun initializeMcpSession(serverId: String, endpoint: String, timeoutMs: Int): String? {
+        val sessionKey = "$serverId|$endpoint"
         val response = mcpPostJson(
             endpoint,
             JSONObject()
@@ -3660,15 +4725,16 @@ print(json.dumps({
                                 .put("name", "mobile-agent")
                                 .put("version", "0.1.0")
                         )
-                )
+            )
                 .toString(),
             timeoutMs,
-            null
+            null,
+            runtimeConfig.mcpServerAuthToken(serverId)
         )
         parseMcpResult(response.first, "initialize")
-        val session = response.second ?: mcpSessions[endpoint]
+        val session = response.second ?: mcpSessions[sessionKey]
         if (session != null && session.isNotBlank()) {
-            mcpSessions[endpoint] = session
+            mcpSessions[sessionKey] = session
         }
         return session
     }
@@ -3688,7 +4754,8 @@ print(json.dumps({
         url: String,
         body: String,
         timeoutMs: Int,
-        mcpSessionId: String?
+        mcpSessionId: String?,
+        authToken: String = runtimeConfig.mcpAuthToken()
     ): Pair<JSONObject, String?> {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
@@ -3700,7 +4767,7 @@ print(json.dumps({
         if (mcpSessionId != null && mcpSessionId.isNotBlank()) {
             connection.setRequestProperty("Mcp-Session-Id", mcpSessionId)
         }
-        val auth = runtimeConfig.mcpAuthToken().trim()
+        val auth = authToken.trim()
         if (auth.isNotBlank()) {
             connection.setRequestProperty("Authorization", "Bearer $auth")
         }
@@ -4031,6 +5098,9 @@ print(json.dumps({
             .put("compactions", prefs.getInt("context_compactions", 0))
             .put("auto_compact_token_threshold", CONTEXT_COMPACT_TOKEN_THRESHOLD)
             .put("auto_compact_policy", "token_only")
+            .put("request_token_budget", REQUEST_TOKEN_BUDGET_FOR_STATUS)
+            .put("request_trim_policy", "token_budget_only")
+            .put("cache_prefix_policy", "stable_system_then_history_dynamic_memory_near_latest_user")
             .put("by_role", byRole)
     }
 
@@ -4217,6 +5287,37 @@ print(json.dumps({
         return prefs.getString("api_key", null)
     }
 
+    private fun normalizeVisibleChinese(text: String): String {
+        if (text.isBlank()) return text
+        val replacements = mapOf(
+            '當' to '当', '狀' to '状', '態' to '态', '覽' to '览', '項' to '项',
+            '詳' to '详', '連' to '连', '線' to '线', '電' to '电', '腦' to '脑',
+            '終' to '终', '檔' to '档', '傳' to '传', '穩' to '稳', '隨' to '随',
+            '幫' to '帮', '剛' to '刚', '執' to '执', '還' to '还', '過' to '过',
+            '這' to '这', '裡' to '里', '啟' to '启', '動' to '动', '務' to '务',
+            '設' to '设', '聽' to '听', '離' to '离', '現' to '现', '應' to '应',
+            '實' to '实', '際' to '际', '檢' to '检', '錯' to '错', '誤' to '误',
+            '說' to '说', '請' to '请', '處' to '处', '選' to '选', '擇' to '择',
+            '開' to '开', '關' to '关', '閉' to '闭', '輸' to '输', '個' to '个',
+            '麼' to '么', '嗎' to '吗', '為' to '为', '與' to '与', '後' to '后',
+            '臺' to '台', '標' to '标', '題' to '题', '顯' to '显', '發' to '发',
+            '獲' to '获', '讀' to '读', '寫' to '写', '刪' to '删', '壓' to '压',
+            '會' to '会', '報' to '报', '無' to '无', '礙' to '碍', '權' to '权',
+            '儲' to '储', '網' to '网', '絡' to '络', '訊' to '讯', '複' to '复',
+            '製' to '制', '點' to '点', '擊' to '击', '畫' to '画', '螢' to '屏',
+            '體' to '体', '區' to '区', '戶' to '户', '優' to '优', '級' to '级',
+            '則' to '则', '內' to '内', '產' to '产', '長' to '长', '數' to '数',
+            '據' to '据', '測' to '测', '試' to '试', '學' to '学', '習' to '习',
+            '記' to '记', '錄' to '录', '歷' to '历', '證' to '证', '讓' to '让',
+            '來' to '来', '導' to '导', '遠' to '远', '層' to '层', '專' to '专',
+            '夠' to '够', '種' to '种', '彈' to '弹', '視' to '视', '覺' to '觉',
+            '廣' to '广', '參' to '参', '綁' to '绑'
+        )
+        val builder = StringBuilder(text.length)
+        text.forEach { char -> builder.append(replacements[char] ?: char) }
+        return builder.toString()
+    }
+
     private fun loadMessages(sessionId: String): JSONArray {
         return runCatching { JSONArray(prefs.getString(sessionKey(sessionId), "[]")) }.getOrDefault(JSONArray())
     }
@@ -4304,6 +5405,7 @@ print(json.dumps({
         private const val CONTEXT_COMPACT_TOKEN_THRESHOLD = 500_000
         private const val CONTEXT_KEEP_RECENT_MESSAGES = 40
         private const val CONTEXT_COMPACT_SUMMARY_CHARS = 8_000
+        private const val REQUEST_TOKEN_BUDGET_FOR_STATUS = 800_000
         private val terminalRecoveryFuses = mutableMapOf<String, RecoveryFuse>()
         private val terminalRuntimeLock = Any()
         private var terminalRuntimeBusy = false
@@ -4368,3 +5470,4 @@ print(json.dumps({
         )
     }
 }
+

@@ -23,6 +23,10 @@ class MobileWorkspace(private val context: Context) {
             .put("changes", historyRoot.listFiles()?.count { it.isDirectory } ?: 0)
     }
 
+    fun resolvePath(path: String): File {
+        return resolve(path)
+    }
+
     fun list(path: String = ".", maxEntries: Int = 100): JSONObject {
         val target = resolve(path)
         if (!target.exists()) {

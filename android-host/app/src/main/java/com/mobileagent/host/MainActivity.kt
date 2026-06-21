@@ -48,6 +48,7 @@ class MainActivity : Activity() {
     private var statusRefreshActive = false
     private var sending = false
     private var sendingStartedAt = 0L
+    private var interruptRequested = false
     private var lastEventSeq = 0L
     private val pendingMessages = ArrayDeque<String>()
     private val sendingStatusRunnable = object : Runnable {
@@ -195,7 +196,7 @@ class MainActivity : Activity() {
         }
 
         sendButton = Button(this)
-        sendButton.text = "发"
+        sendButton.text = "发送"
         sendButton.setOnClickListener { sendMessage() }
 
         composer.addView(input, LinearLayout.LayoutParams(
@@ -226,11 +227,11 @@ class MainActivity : Activity() {
                     "核心离线"
                 }
                 val accessibilityLabel = when {
-                    host.optBoolean("connected") -> "无障碍已连接"
-                    host.optBoolean("enabled") -> "无障碍待连接"
-                    else -> "无障碍未连接"
+                    host.optBoolean("connected") -> "无障碍已启用"
+                    host.optBoolean("enabled") -> "无障碍待启用"
+                    else -> "无障碍未启用"
                 }
-                statusText.text = "$coreLabel | 基座桥接在线 | $accessibilityLabel"
+                statusText.text = "$coreLabel | 本地桥接在线 | $accessibilityLabel"
                 statusText.text = "${statusText.text} | ${terminalHeaderLabel(core.getOrNull())}"
                 statusText.text = "${statusText.text} | ${mcpHeaderLabel(core.getOrNull())}"
                 detailStatusText.text = summarizeStatus(core.getOrNull())
@@ -258,8 +259,23 @@ class MainActivity : Activity() {
     }
 
     private fun queueMessage(text: String) {
-        pendingMessages.addLast(text)
-        addMessage("系统", "任务执行中，已为你把消息加入队列，当前还有 ${pendingMessages.size} 条")
+        pendingMessages.addLast(INTERRUPT_PREFIX + text)
+        if (!interruptRequested) {
+            interruptRequested = true
+            runCatching { nativeCore.requestStop(sessionId) }
+                .onSuccess { response ->
+                    if (response.optBoolean("ok")) {
+                        addMessage("系统", "已追加新指令，并请求当前任务在下一个安全点停止。队列 ${pendingMessages.size} 条。")
+                    } else {
+                        addMessage("系统", "已追加新指令，但停止请求未生效：${response.optString("error", "未知错误")}。队列 ${pendingMessages.size} 条。")
+                    }
+                }
+                .onFailure { exc ->
+                    addMessage("系统", "已追加新指令，但停止请求失败：${exc.message ?: exc.javaClass.simpleName}。队列 ${pendingMessages.size} 条。")
+                }
+        } else {
+            addMessage("系统", "已继续追加指令，当前任务已请求停止，队列 ${pendingMessages.size} 条。")
+        }
         refreshComposerState()
     }
 
@@ -278,7 +294,7 @@ class MainActivity : Activity() {
         if (needsActionConfirmation(text)) {
             AlertDialog.Builder(this)
                 .setTitle("确认执行手机操作")
-                .setMessage("下一条指令可能触发自动化或其他 APP 操作。请确认是否继续。\n$text")
+                .setMessage("下一条指令可能触发自动化或其他应用操作。请确认是否继续。\n$text")
                 .setNegativeButton("取消", null)
                 .setPositiveButton("发送") { _, _ -> sendConfirmedMessage(text, actionsApproved = true) }
                 .show()
@@ -293,6 +309,7 @@ class MainActivity : Activity() {
             addMessage("系统", if (pendingMessages.isEmpty()) "当前未在运行中，暂无可停止的执行。" else "当前仍有 ${pendingMessages.size} 条待发送消息。")
             return
         }
+        interruptRequested = true
         runCatching { nativeCore.requestStop(sessionId) }
             .onSuccess { response ->
                 if (response.optBoolean("ok")) {
@@ -325,6 +342,9 @@ class MainActivity : Activity() {
         }
         if (normalized.startsWith("-mcp ") || normalized.startsWith("/mcp ") || normalized.startsWith("mcp ")) {
             return "mcp:${raw.substringAfter(' ').trim()}"
+        }
+        if (normalized.startsWith("-ssh ") || normalized.startsWith("/ssh ") || normalized.startsWith("ssh ")) {
+            return "ssh:${raw.substringAfter(' ').trim()}"
         }
         if (normalized.startsWith("-rounds ") || normalized.startsWith("/rounds ") || normalized.startsWith("rounds ")) {
             return "rounds:${raw.substringAfter(' ').trim()}"
@@ -385,6 +405,7 @@ class MainActivity : Activity() {
                         "-terminal on|off|status|recover|health|http://127.0.0.1:8787  配置终端接口\n" +
                         "-mcp on|off|status|tools [关键词]|token <token>|<baseUrl>\n" +
                         "      配置并检测 Windows MCP/远程 MCP\n" +
+                        "-ssh on|off|status|connect|disconnect|<host>  配置 SSH 连接\n" +
                         "-clear  清空当前显示\n" +
                         "-key sk-...  保存模型 API Key\n" +
                         "-help  显示帮助"
@@ -401,7 +422,7 @@ class MainActivity : Activity() {
                         addMessage("错误", "API Key 格式不正确，请输入 sk-...")
                     } else {
                         nativeCore.setApiKey(key)
-                        addMessage("系统", "API Key 已保存到 APP ")
+                        addMessage("系统", "API Key 已保存到应用")
                         refreshStatus()
                     }
                 } else if (command.startsWith("perm:")) {
@@ -410,6 +431,8 @@ class MainActivity : Activity() {
                     setTerminalFromCommand(command.removePrefix("terminal:").trim())
                 } else if (command.startsWith("mcp:")) {
                     setMcpFromCommand(command.removePrefix("mcp:").trim())
+                } else if (command.startsWith("ssh:")) {
+                    setSshFromCommand(command.removePrefix("ssh:").trim())
                 } else if (command.startsWith("rounds:")) {
                     setMaxToolRoundsFromCommand(command.removePrefix("rounds:").trim())
                 }
@@ -435,7 +458,7 @@ class MainActivity : Activity() {
         }
         return "官方文档：\n" +
             lines.joinToString("\n") +
-            "\\n\\nAgent 可用工具：docs_index / docs_read / docs_search / docs_sync\\n文件内容从 APP 工作目录加载，路径为 docs/official/"
+            "\\n\\nAgent 可用工具：docs_index / docs_read / docs_search / docs_sync\\n文件内容从应用工作目录加载，路径为 docs/official/"
     }
 
     private fun configSummary(): String {
@@ -448,13 +471,21 @@ class MainActivity : Activity() {
         }
         val mcp = status.optJSONObject("mcp") ?: JSONObject()
         val mcpText = if (mcp.optBoolean("enabled")) {
-            val tokenText = if (mcp.optBoolean("has_auth_token", false)) "有token" else "无token"
+            val tokenText = if (mcp.optBoolean("has_auth_token", false)) "已配置 token" else "未配置 token"
             "MCP ${mcp.optString("base_url", "-")} ($tokenText)"
         } else {
-            "MCP未启用"
+            "MCP 未启用"
+        }
+        val ssh = status.optJSONObject("ssh") ?: JSONObject()
+        val sshText = if (ssh.optBoolean("enabled")) {
+            val connectedText = if (status.optJSONObject("ssh_runtime")?.optBoolean("connected", false) == true) "已连接" else "未连接"
+            val keyText = if (ssh.optString("key_path").isNotBlank()) "有密钥" else "无密钥"
+            "SSH ${ssh.optString("host", "-")}:${ssh.optInt("port", 22)} ${ssh.optString("user", "-")} ($connectedText, $keyText)"
+        } else {
+            "SSH 未启用"
         }
         val maxToolRounds = status.optJSONObject("config")?.optInt("max_tool_rounds", 30) ?: 30
-        return "当前配置：权限 ${permissionLabel(status.optString("permission_mode", "safe"))} | 工具轮数 $maxToolRounds | $terminalText | $mcpText"
+        return "当前配置：权限 ${permissionLabel(status.optString("permission_mode", "safe"))} | 工具轮数 $maxToolRounds | $terminalText | $mcpText | $sshText"
     }
 
     private fun setMaxToolRoundsFromCommand(value: String) {
@@ -584,6 +615,101 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun setSshFromCommand(value: String) {
+        try {
+            val tokens = value.trim().split(Regex("\\s+"), limit = 2)
+            val current = nativeCore.config().optJSONObject("ssh") ?: JSONObject()
+            var enabled = current.optBoolean("enabled", false)
+            var host = current.optString("host", "")
+            var port = current.optInt("port", 22)
+            var user = current.optString("user", "")
+            var keyPath = current.optString("key_path", "")
+            val passphrase = nativeCore.sshPassphraseForUi()
+            if (tokens.isEmpty() || value.isBlank()) {
+                addMessage("系统", "用法：ssh on|off|status|diagnose|select <hosts>|connect|disconnect|host <value>|user <value>|port <value>|key <path>")
+                return
+            }
+            val first = tokens[0].lowercase()
+            val rest = if (tokens.size > 1) tokens[1] else ""
+            when (first) {
+                "on", "enable", "enabled", "开启", "open" -> {
+                    enabled = true
+                    addMessage("系统", "SSH 配置已启用")
+                }
+                "off", "disable", "disabled", "关闭", "close" -> {
+                    enabled = false
+                    addMessage("系统", "SSH 配置已关闭")
+                }
+                "status" -> {
+                    showSshStatus()
+                    return
+                }
+                "diagnose", "diag", "test" -> {
+                    showSshDiagnose()
+                    return
+                }
+                "select", "auto", "pick" -> {
+                    showSshSelectHost(rest)
+                    return
+                }
+                "connect" -> {
+                    showSshConnect()
+                    return
+                }
+                "disconnect" -> {
+                    showSshDisconnect()
+                    return
+                }
+                "host", "url", "server", "address" -> {
+                    if (rest.isBlank()) {
+                        addMessage("错误", "请输入 SSH 主机，示例：ssh host 100.64.0.10")
+                        return
+                    }
+                    host = rest
+                    enabled = true
+                    addMessage("系统", "SSH 主机已设置为 $rest")
+                }
+                "user" -> {
+                    if (rest.isBlank()) {
+                        addMessage("错误", "请输入 SSH 用户名，示例：ssh user tianhao")
+                        return
+                    }
+                    user = rest
+                    enabled = true
+                    addMessage("系统", "SSH 用户已设置为 $rest")
+                }
+                "port" -> {
+                    val parsed = rest.toIntOrNull()
+                    if (parsed == null) {
+                        addMessage("错误", "请输入 SSH 端口，示例：ssh port 22")
+                        return
+                    }
+                    port = parsed
+                    enabled = true
+                    addMessage("系统", "SSH 端口已设置为 $parsed")
+                }
+                "key", "key_path", "identity" -> {
+                    if (rest.isBlank()) {
+                        addMessage("错误", "请输入 SSH 私钥路径，示例：ssh key shared_storage:/keys/id_ed25519")
+                        return
+                    }
+                    keyPath = rest
+                    enabled = true
+                    addMessage("系统", "SSH 私钥路径已设置为 $rest")
+                }
+                else -> {
+                    host = first
+                    enabled = true
+                    addMessage("系统", "SSH 主机已设置为 $first")
+                }
+            }
+            nativeCore.setSshConfig(enabled, host, port, user, keyPath, passphrase)
+            refreshStatus()
+        } catch (exc: Exception) {
+            addMessage("错误", exc.message ?: exc.javaClass.simpleName)
+        }
+    }
+
     private fun showMcpStatus() {
         addMessage("系统", "正在检查 MCP 连接...")
         thread(name = "mobile-agent-mcp-status") {
@@ -619,13 +745,88 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun showSshStatus() {
+        addMessage("系统", "正在检查 SSH 状态...")
+        thread(name = "mobile-agent-ssh-status") {
+            val result = runCatching { nativeCore.sshStatusForUi() }
+            ui.post {
+                result
+                    .onSuccess { addMessage("系统", "SSH 状态：\n${it.toString(2)}") }
+                    .onFailure { addMessage("错误", it.message ?: it.javaClass.simpleName) }
+                refreshStatus()
+            }
+        }
+    }
+
+    private fun showSshConnect() {
+        addMessage("系统", "正在连接 SSH...")
+        thread(name = "mobile-agent-ssh-connect") {
+            val result = runCatching { nativeCore.sshConnectForUi() }
+            ui.post {
+                result
+                    .onSuccess { addMessage("系统", "SSH 连接结果：\n${it.toString(2)}") }
+                    .onFailure { addMessage("错误", it.message ?: it.javaClass.simpleName) }
+                refreshStatus()
+            }
+        }
+    }
+
+    private fun showSshDiagnose() {
+        addMessage("系统", "正在诊断 SSH 网络...")
+        thread(name = "mobile-agent-ssh-diagnose") {
+            val result = runCatching { nativeCore.sshDiagnoseForUi() }
+            ui.post {
+                result
+                    .onSuccess { addMessage("系统", "SSH 诊断结果：\n${it.toString(2)}") }
+                    .onFailure { addMessage("错误", it.message ?: it.javaClass.simpleName) }
+                refreshStatus()
+            }
+        }
+    }
+
+    private fun showSshSelectHost(candidates: String = "") {
+        addMessage("系统", "正在自动选择 SSH 地址...")
+        thread(name = "mobile-agent-ssh-select") {
+            val args = JSONObject()
+            if (candidates.isNotBlank()) {
+                val array = JSONArray()
+                candidates.split(Regex("[,;\\s]+"))
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .forEach { array.put(it) }
+                args.put("hosts", array)
+            }
+            args.put("apply", true)
+            val result = runCatching { nativeCore.sshSelectHostForUi(args) }
+            ui.post {
+                result
+                    .onSuccess { addMessage("系统", "SSH 地址选择结果：\n${it.toString(2)}") }
+                    .onFailure { addMessage("错误", it.message ?: it.javaClass.simpleName) }
+                refreshStatus()
+            }
+        }
+    }
+
+    private fun showSshDisconnect() {
+        addMessage("系统", "正在断开 SSH...")
+        thread(name = "mobile-agent-ssh-disconnect") {
+            val result = runCatching { nativeCore.sshDisconnectForUi() }
+            ui.post {
+                result
+                    .onSuccess { addMessage("系统", "SSH 已断开：\n${it.toString(2)}") }
+                    .onFailure { addMessage("错误", it.message ?: it.javaClass.simpleName) }
+                refreshStatus()
+            }
+        }
+    }
+
     private fun showTerminalStatus() {
         addMessage("系统", "正在检查终端连接...")
         thread(name = "mobile-agent-terminal-status") {
             val result = runCatching { nativeCore.terminalStatusForUi() }
             ui.post {
                 result
-                    .onSuccess { addMessage("系统", "终端接口状：\n${it.toString(2)}") }
+                    .onSuccess { addMessage("系统", "终端接口状态：\n${it.toString(2)}") }
                     .onFailure { addMessage("错误", it.message ?: it.javaClass.simpleName) }
                 refreshStatus()
             }
@@ -746,7 +947,7 @@ class MainActivity : Activity() {
             dialog.dismiss()
             showConfigDialog()
         }
-        addPanelButton("终端状") {
+        addPanelButton("终端状态") {
             dialog.dismiss()
             showTerminalStatus()
         }
@@ -1264,9 +1465,9 @@ class MainActivity : Activity() {
             else -> "终端${terminal.optString("status")}"
         }
         val accessibilityText = if (accessibility.optBoolean("connected", false)) {
-            "无障碍已连接"
+            "无障碍已启用"
         } else {
-            "无障碍未连接"
+            "无障碍未启用"
         }
         val recovery = result.optJSONObject("recovery") ?: JSONObject()
         val recoveryText = when {
@@ -1281,6 +1482,7 @@ class MainActivity : Activity() {
     private fun startNewSession() {
         sessionId = nativeCore.newSession()
         pendingMessages.clear()
+        interruptRequested = false
         refreshComposerState()
         savedMessages.clear()
         messages.removeAllViews()
@@ -1289,7 +1491,9 @@ class MainActivity : Activity() {
     }
 
     private fun sendConfirmedMessage(text: String, actionsApproved: Boolean) {
-        addMessage("我", text)
+        val visibleText = visibleUserText(text)
+        interruptRequested = false
+        addMessage("我", visibleText)
         setSending(true)
 
         thread(name = "mobile-agent-chat") {
@@ -1472,13 +1676,17 @@ class MainActivity : Activity() {
     private fun refreshComposerState() {
         stopButton.isEnabled = sending
         sendButton.text = if (sending) {
-            if (pendingMessages.isEmpty()) "发送中"
-            else "发送 (${pendingMessages.size})"
+            if (pendingMessages.isEmpty()) "追加"
+            else "追加 (${pendingMessages.size})"
         } else if (pendingMessages.isNotEmpty()) {
             "发送 (${pendingMessages.size})"
         } else {
             "发送"
         }
+    }
+
+    private fun visibleUserText(text: String): String {
+        return if (text.startsWith(INTERRUPT_PREFIX)) text.removePrefix(INTERRUPT_PREFIX) else text
     }
 
     private fun refreshLiveEvents(seconds: Long) {
@@ -1717,6 +1925,83 @@ class MainActivity : Activity() {
         mcpHint.setPadding(0, 8, 0, 0)
         layout.addView(mcpHint)
 
+        val sshConfig = config.optJSONObject("ssh") ?: JSONObject()
+        val sshTitle = TextView(this)
+        sshTitle.text = "SSH 连接"
+        sshTitle.textSize = 16f
+        sshTitle.setTextColor(Color.rgb(25, 29, 35))
+        sshTitle.setPadding(0, 18, 0, 4)
+        layout.addView(sshTitle)
+
+        val sshEnabled = CheckBox(this)
+        sshEnabled.text = "启用原生 SSH 连接"
+        sshEnabled.isChecked = sshConfig.optBoolean("enabled")
+        layout.addView(sshEnabled)
+
+        val sshHost = EditText(this)
+        sshHost.hint = "SSH 主机 / Tailscale 地址"
+        sshHost.setSingleLine(true)
+        sshHost.setText(sshConfig.optString("host", ""))
+        sshHost.setPadding(12, 8, 12, 8)
+        layout.addView(sshHost)
+
+        val sshPort = EditText(this)
+        sshPort.hint = "端口，默认 22"
+        sshPort.setSingleLine(true)
+        sshPort.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        sshPort.setText(sshConfig.optInt("port", 22).toString())
+        sshPort.setPadding(12, 8, 12, 8)
+        layout.addView(sshPort)
+
+        val sshUser = EditText(this)
+        sshUser.hint = "SSH 用户名"
+        sshUser.setSingleLine(true)
+        sshUser.setText(sshConfig.optString("user", ""))
+        sshUser.setPadding(12, 8, 12, 8)
+        layout.addView(sshUser)
+
+        val sshKeyPath = EditText(this)
+        sshKeyPath.hint = "私钥路径，例如 shared_storage:/keys/id_ed25519"
+        sshKeyPath.setSingleLine(true)
+        sshKeyPath.setText(sshConfig.optString("key_path", ""))
+        sshKeyPath.setPadding(12, 8, 12, 8)
+        layout.addView(sshKeyPath)
+
+        val sshPassphrase = EditText(this)
+        sshPassphrase.hint = "可选：私钥口令"
+        sshPassphrase.setSingleLine(true)
+        sshPassphrase.setText(nativeCore.sshPassphraseForUi())
+        sshPassphrase.setPadding(12, 8, 12, 8)
+        layout.addView(sshPassphrase)
+
+        val sshTimeoutHint = TextView(this)
+        sshTimeoutHint.text = "手机端会优先用 PowerShell 执行远端命令；文件传输通过 SSH/SFTP 完成。"
+        sshTimeoutHint.textSize = 12f
+        sshTimeoutHint.setTextColor(Color.rgb(110, 120, 132))
+        sshTimeoutHint.setPadding(0, 8, 0, 0)
+        layout.addView(sshTimeoutHint)
+
+        val storageStatus = nativeCore.storagePermissionStatusForUi()
+        val storageHint = TextView(this)
+        storageHint.text = if (storageStatus.optBoolean("all_files_access", false)) {
+            "文件访问：已允许，可使用 shared_storage:/Download/... 传输下载/微信导出的文件。"
+        } else {
+            "文件访问：未允许。要传输 shared_storage:/Download/... 文件，请先打开授权页。"
+        }
+        storageHint.textSize = 12f
+        storageHint.setTextColor(Color.rgb(110, 120, 132))
+        storageHint.setPadding(0, 10, 0, 0)
+        layout.addView(storageHint)
+
+        val storageButton = Button(this)
+        storageButton.text = "打开文件访问授权"
+        storageButton.setOnClickListener {
+            val result = runCatching { nativeCore.openStoragePermissionSettingsForUi() }
+            result.onSuccess { addMessage("系统", "文件访问授权页已打开：\n${it.toString(2)}") }
+                .onFailure { addMessage("错误", it.message ?: it.javaClass.simpleName) }
+        }
+        layout.addView(storageButton)
+
         val dialog = AlertDialog.Builder(this)
             .setTitle("Agent 配置")
             .setView(layout)
@@ -1736,6 +2021,14 @@ class MainActivity : Activity() {
                             mcpEnabled.isChecked,
                             mcpUrl.text.toString(),
                             if (tokenValue.isBlank()) nativeCore.mcpAuthToken() else tokenValue
+                        )
+                        nativeCore.setSshConfig(
+                            sshEnabled.isChecked,
+                            sshHost.text.toString(),
+                            sshPort.text.toString().toIntOrNull() ?: 22,
+                            sshUser.text.toString(),
+                            sshKeyPath.text.toString(),
+                            sshPassphrase.text.toString()
                         )
                         addMessage("系统", "配置已应用\n${configSummary()}")
                         refreshStatus()
@@ -2059,6 +2352,12 @@ class MainActivity : Activity() {
         val value = text.trim()
         if (value.contains(" ") || value.contains("\n") || value.length < 12) return false
         return value.startsWith("sk-") || value.startsWith("sk_") || value.lowercase().startsWith("sk-")
+    }
+
+    private companion object {
+        private const val INTERRUPT_PREFIX =
+            "[APP_RUNTIME_INTERRUPT]\n" +
+                "用户在上一轮执行过程中追加了这条新指令。请先参考上一轮任务循环和最新工具结果，按这条新指令调整计划继续；不要重复已经被用户否定的动作。\n\n"
     }
 }
 

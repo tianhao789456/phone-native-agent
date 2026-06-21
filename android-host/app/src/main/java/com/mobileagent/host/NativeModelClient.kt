@@ -16,7 +16,7 @@ class NativeModelClient(
     private val saveUsage: (JSONObject) -> Unit
 ) {
     fun request(apiKey: String, messages: JSONArray, enabledTools: Set<String>): NativeModelResponse {
-        val requestMessages = fitMessagesToBudget(trimMessages(messages, profile.MESSAGE_TRIM_LIMIT))
+        val requestMessages = fitMessagesToBudget(trimMessages(messages))
         val requestStats = messageStats(requestMessages)
         val payload = JSONObject()
             .put("model", profile.MODEL)
@@ -114,14 +114,14 @@ class NativeModelClient(
         }
     }
 
-    private fun trimMessages(messages: JSONArray, limit: Int): JSONArray {
+    private fun trimMessages(messages: JSONArray): JSONArray {
         val raw = JSONArray()
         val first = messages.optJSONObject(0)
         val keepFirstSystem = first?.optString("role") == "system"
         if (keepFirstSystem) {
             raw.put(first)
         }
-        val start = (messages.length() - limit).coerceAtLeast(0)
+        val start = if (keepFirstSystem) 1 else 0
         for (index in start until messages.length()) {
             if (keepFirstSystem && index == 0) continue
             raw.put(messages.getJSONObject(index))

@@ -50,6 +50,8 @@ Most mobile automation agents start from a desktop process that drives a phone o
 - the phone owns the runtime surface;
 - AccessibilityService is the primary screen/action backend;
 - Termux is an optional terminal/script backend;
+- native SSH is the stable backend control bridge, with SFTP file transfer for phone <-> PC workflows;
+- SSH is the preferred way to repair backend services, move files, and keep the computer controllable when GUI tools fail;
 - cloud models provide reasoning, while tools and traces stay local;
 - task execution records evidence instead of trusting that a tool returning `ok=true` means the real-world goal is done.
 
@@ -69,6 +71,8 @@ Most mobile automation agents start from a desktop process that drives a phone o
 
 - [手机端截图](docs/assets/mobile-agent-home.png)
 - [仓库预览图](docs/assets/github-social-preview.png)
+- [手机主导连接电脑：SSH + 文件传输](docs/ssh-pc-control.md)
+- [v0.2.0-alpha Release Notes](docs/releases/v0.2.0-alpha.md)
 - [v0.1.0 Release](https://github.com/tianhao789456/phone-native-agent/releases/tag/v0.1.0)
 
 ## Architecture
@@ -78,7 +82,7 @@ flowchart LR
     User["User"]
     Android["Android Host App<br/>Kotlin UI + native tools"]
     Core["Agent Core<br/>Plan-Act-Verify-Retry"]
-    Tools["Tool Registry<br/>phone, workspace, plugins, MCP"]
+    Tools["Tool Registry<br/>phone, workspace, plugins, MCP, SSH"]
     Termux["Optional Termux backend"]
     Model["Cloud or local OpenAI-compatible model"]
 
