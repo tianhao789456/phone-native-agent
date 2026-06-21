@@ -23,6 +23,8 @@ class NativeMemoryToolDispatcher(
                 arguments.optInt("limit", 80)
             )
             "memory_write" -> memory.writeMemory(arguments)
+            "memory_update" -> memory.updateMemory(arguments)
+            "memory_delete" -> memory.deleteMemory(arguments)
             "experience_search" -> memory.searchExperience(arguments)
             "experience_record" -> memory.recordExperience(arguments)
             "experience_update" -> memory.updateExperience(arguments)
@@ -46,6 +48,8 @@ class NativeMemoryToolDispatcher(
             "memory_search",
             "memory_summary",
             "memory_write",
+            "memory_update",
+            "memory_delete",
             "experience_search",
             "experience_record",
             "experience_update",

@@ -128,6 +128,60 @@ class NativeTaskMemoryCoordinator(
         }
     }
 
+    fun recordLoopFailureExperience(
+        userMessage: String,
+        taskLoop: JSONObject,
+        blocker: JSONObject?,
+        runId: String
+    ): JSONObject {
+        if (blocker == null || blocker.length() == 0) {
+            return JSONObject().put("ok", true).put("skipped", true).put("reason", "no_loop_guard_blocker")
+        }
+        return runCatching {
+            val tool = blocker.optString("tool", "unknown_tool").ifBlank { "unknown_tool" }
+            val reason = blocker.optString("reason", "loop_guard_stop")
+            val summary = blocker.optString("summary", "").ifBlank {
+                taskLoop.optJSONObject("completion_review")?.optString("summary", "").orEmpty()
+            }.take(500)
+            val latestObservation = blocker.optJSONObject("latest_observation") ?: JSONObject()
+            val observationText = latestObservation.toString().take(600)
+            val description = buildString {
+                append("任务被闭环保护暂停：工具 ")
+                append(tool)
+                append(" 因 ")
+                append(reason)
+                append(" 反复失败。")
+                if (summary.isNotBlank()) append("失败摘要：").append(summary).append("。")
+                append("下次不要重复同一调用，应先观察当前状态、改参数或换工具。")
+                if (observationText.length > 2) append("最近观察：").append(observationText)
+            }.take(1200)
+            val recorded = memory.recordExperience(
+                JSONObject()
+                    .put("app", "general")
+                    .put("tool_scope", scopeForTool(tool))
+                    .put("task_type", taskMemoryLabel(userMessage))
+                    .put("lesson_type", "failed_approach")
+                    .put("description", description)
+                    .put("source_task", userMessage.take(800))
+                    .put("confidence", "medium")
+                    .put("run_id", runId)
+            )
+            JSONObject()
+                .put("ok", true)
+                .put("experience", recorded)
+                .put("tool", tool)
+                .put("reason", reason)
+        }.getOrElse { error ->
+            log(
+                "warn",
+                "memory",
+                "loop failure experience recording failed",
+                JSONObject().put("error_type", error.javaClass.simpleName).put("error", error.message ?: "")
+            )
+            JSONObject().put("ok", false).put("error", error.message ?: error.toString())
+        }
+    }
+
     fun learningStopWithModel(arguments: JSONObject, apiKeyProvider: () -> String?): JSONObject {
         val stopped = memory.learningStop(arguments)
         if (!stopped.optBoolean("ok", false)) return stopped
@@ -313,6 +367,20 @@ class NativeTaskMemoryCoordinator(
             )
         }
         return lines.takeLast(30).joinToString("\n")
+    }
+
+    private fun taskMemoryLabel(userMessage: String): String {
+        return userMessage.trim().replace(Regex("\\s+"), " ").take(120).ifBlank { "task_loop" }
+    }
+
+    private fun scopeForTool(tool: String): String {
+        return when {
+            tool.startsWith("host_") || tool == "accessibility_snapshot_v2" || tool in setOf("intent_open", "share_file", "open_file_with") -> "phone"
+            tool.startsWith("ssh_") || tool.startsWith("pc_") -> "windows_pc"
+            tool.startsWith("mcp_") || tool == "mcp_call" -> "mcp"
+            tool.startsWith("terminal_") -> "termux"
+            else -> "general"
+        }
     }
 
     private fun parseJsonObjectFromText(text: String): JSONObject {

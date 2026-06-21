@@ -44,7 +44,15 @@ class MainTaskController(
 
     fun requestStopCurrentTask() {
         if (!isSending()) {
-            addMessage("系统", if (pendingMessages.isEmpty()) "当前未在运行中，暂无可停止的执行。" else "当前仍有 ${pendingMessages.size} 条待发送消息。", null)
+            addMessage(
+                "系统",
+                if (pendingMessages.isEmpty()) {
+                    "当前没有正在运行的任务。"
+                } else {
+                    "当前还有 ${pendingMessages.size} 条待发送消息。"
+                },
+                null
+            )
             return
         }
         interruptRequested = true
@@ -72,7 +80,7 @@ class MainTaskController(
         val events = core.eventsForUi(lastEventSeq, 20)
         val list = events.optJSONArray("events") ?: JSONArray()
         if (list.length() == 0) {
-            onLiveStatus("running ${seconds}s | waiting event")
+            onLiveStatus("运行 ${seconds}s | 等待事件")
             return
         }
         val latest = list.optJSONObject(list.length() - 1) ?: return
@@ -80,14 +88,14 @@ class MainTaskController(
         val message = latest.optString("message", latest.optString("type", "event"))
         val details = latest.optJSONObject("details") ?: JSONObject()
         val extra = when (latest.optString("type")) {
-            "model_started" -> "messages ${details.optInt("messages", 0)}"
-            "model_finished" -> "tools ${details.optInt("tool_calls", 0)} | ${details.optLong("duration_ms", 0)}ms"
-            "tool_started" -> "step ${details.optInt("step", 0)}"
+            "model_started" -> "消息 ${details.optInt("messages", 0)}"
+            "model_finished" -> "工具 ${details.optInt("tool_calls", 0)} | ${details.optLong("duration_ms", 0)}ms"
+            "tool_started" -> "步骤 ${details.optInt("step", 0)}"
             "tool_finished" -> "${details.optString("state", "-")} | ${details.optLong("duration_ms", 0)}ms"
             "model_failed" -> details.optString("error", "").take(80)
             else -> ""
         }
-        onLiveStatus(listOf("running ${seconds}s", message, extra).filter { it.isNotBlank() }.joinToString(" | "))
+        onLiveStatus(listOf("运行 ${seconds}s", message, extra).filter { it.isNotBlank() }.joinToString(" | "))
     }
 
     fun startLiveEventTracking() {
@@ -166,7 +174,7 @@ class MainTaskController(
                     addMessage("系统", "已追加新指令，但停止请求失败：${exc.message ?: exc.javaClass.simpleName}。队列 ${pendingMessages.size} 条。", null)
                 }
         } else {
-            addMessage("系统", "已继续追加指令，当前任务已请求停止，队列 ${pendingMessages.size} 条。", null)
+            addMessage("系统", "已继续追加指令，当前任务已经请求停止，队列 ${pendingMessages.size} 条。", null)
         }
         onComposerStateChanged()
     }
@@ -180,7 +188,7 @@ class MainTaskController(
         if (needsActionConfirmation(text)) {
             AlertDialog.Builder(activity)
                 .setTitle("确认执行手机操作")
-                .setMessage("下一条指令可能触发自动化或其他应用操作。请确认是否继续。\n$text")
+                .setMessage("下一条指令可能触发自动化、终端、文件、远程电脑或其他应用操作。请确认是否继续。\n\n$text")
                 .setNegativeButton("取消", null)
                 .setPositiveButton("发送") { _, _ -> sendConfirmedMessage(text, actionsApproved = true) }
                 .show()
@@ -213,7 +221,7 @@ class MainTaskController(
             output.optString("error", "").takeIf { it.isNotBlank() }?.let {
                 append("原因:\n").append(it).append("\n\n")
             }
-            append("确认动作: 该动作触发确认后自动继续执行。")
+            append("确认后会继续执行该工具调用。")
         }
         AlertDialog.Builder(activity)
             .setTitle("确认工具调用")
@@ -231,9 +239,12 @@ class MainTaskController(
             "run", "execute", "command", "shell", "terminal", "script", "terminal_run",
             "terminal_script", "terminal_task", "task", "cancel", "interrupt", "stop",
             "recover", "repair", "restart", "reconnect", "recover_terminal_backend",
-            "look", "next", "input", "send", "delete", "restore", "upload", "open", "back", "return", "swipe",
-            "continue", "choose", "close", "cancel", "scroll", "retry", "run", "execute", "config", "terminal", "session",
-            "任务", "取消", "中断", "停止", "修复", "恢复", "重启", "重连", "自愈"
+            "look", "next", "restore", "upload", "open", "return", "swipe",
+            "continue", "config", "session",
+            "任务", "取消", "中断", "停止", "修复", "恢复", "重启", "重连", "自愈",
+            "点击", "输入", "发送", "删除", "安装", "卸载", "打开", "返回", "主页",
+            "滑动", "滚动", "运行", "执行", "命令", "终端", "脚本", "电脑", "远程",
+            "上传", "下载", "复制", "移动", "文件"
         )
         return actionWords.any { lower.contains(it) }
     }

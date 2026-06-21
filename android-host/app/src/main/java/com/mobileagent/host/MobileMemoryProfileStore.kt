@@ -133,6 +133,75 @@ class MobileMemoryProfileStore(
             .put("paths", paths())
     }
 
+    fun updateMemory(arguments: JSONObject): JSONObject {
+        val profile = readProfile()
+        val target = arguments.optString("target", "").trim()
+        val key = arguments.optString("key", "").trim()
+        val text = arguments.optString("text", "").trim()
+        val value = MobileMemoryText.sanitizeSecret(arguments.optString("value", "")).trim()
+        val confidence = arguments.optString("confidence", "").trim()
+        val arrays = if (target.isNotBlank()) listOf(target) else listOf("preferences", "environment", "do_not_do", "insights", "task_history")
+        for (arrayName in arrays) {
+            val array = profile.optJSONArray(arrayName) ?: continue
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val keyMatches = key.isNotBlank() && item.optString("key").equals(key, ignoreCase = true)
+                val textMatches = text.isNotBlank() && MobileMemoryText.readableMemoryItem(item).contains(text, ignoreCase = true)
+                if (!keyMatches && !textMatches) continue
+                if (value.isNotBlank()) {
+                    item.put("value", value)
+                    item.put("text", "${item.optString("key", key).ifBlank { arrayName }}: $value")
+                }
+                if (arguments.has("type")) item.put("type", MobileMemoryText.sanitizeMemoryType(arguments.optString("type")))
+                if (confidence.isNotBlank()) item.put("confidence", MobileMemoryText.sanitizeConfidence(confidence))
+                item.put("updated_at_ms", nowMs())
+                item.put("last_seen_ms", nowMs())
+                profile.put("last_updated", nowIso())
+                writeJson(profileFile, profile)
+                return JSONObject()
+                    .put("ok", true)
+                    .put("target", arrayName)
+                    .put("item", item)
+                    .put("paths", paths())
+            }
+        }
+        return error("memory item not found; provide target plus key or text")
+    }
+
+    fun deleteMemory(arguments: JSONObject): JSONObject {
+        val profile = readProfile()
+        val target = arguments.optString("target", "").trim()
+        val key = arguments.optString("key", "").trim()
+        val text = arguments.optString("text", "").trim()
+        val arrays = if (target.isNotBlank()) listOf(target) else listOf("preferences", "environment", "do_not_do", "insights", "task_history")
+        for (arrayName in arrays) {
+            val array = profile.optJSONArray(arrayName) ?: continue
+            val kept = JSONArray()
+            var removed: JSONObject? = null
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val keyMatches = key.isNotBlank() && item.optString("key").equals(key, ignoreCase = true)
+                val textMatches = text.isNotBlank() && MobileMemoryText.readableMemoryItem(item).contains(text, ignoreCase = true)
+                if (removed == null && (keyMatches || textMatches)) {
+                    removed = item
+                } else {
+                    kept.put(item)
+                }
+            }
+            if (removed != null) {
+                profile.put(arrayName, kept)
+                profile.put("last_updated", nowIso())
+                writeJson(profileFile, profile)
+                return JSONObject()
+                    .put("ok", true)
+                    .put("target", arrayName)
+                    .put("deleted", removed)
+                    .put("paths", paths())
+            }
+        }
+        return error("memory item not found; provide target plus key or text")
+    }
+
     fun recordTask(task: String, status: String, finalAnswer: String, toolsUsed: JSONArray, appsUsed: JSONArray, runId: String): JSONObject {
         val profile = readProfile()
         val history = profile.optJSONArray("task_history") ?: JSONArray().also { profile.put("task_history", it) }

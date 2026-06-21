@@ -6,7 +6,7 @@ object NativePlanningToolCatalog {
     val descriptors: List<NativeToolDescriptor> = listOf(
         NativeToolDescriptor(
                     name = "task_plan_update",
-                    description = "Create or update the current managed task plan. Use this for multi-step tasks to record goal, step status, evidence, and recovery state before and during tool work.",
+                    description = "Create or update the current managed task plan. Use this for multi-step tasks to record goal, done_when completion criteria, step status, evidence, and recovery state before and during tool work.",
                     category = "planning",
                     access = NativeToolAccess.READ_ONLY,
                     risk = NativeToolRisk.LOW,
@@ -14,6 +14,7 @@ object NativePlanningToolCatalog {
                         "goal" to NativeToolSchema.stringProp(""),
                         "status" to NativeToolSchema.stringProp("in_progress"),
                         "steps" to NativeToolSchema.arrayProp(),
+                        "done_when" to NativeToolSchema.arrayProp(),
                         "step_id" to NativeToolSchema.stringProp(""),
                         "step_status" to NativeToolSchema.stringProp(""),
                         "note" to NativeToolSchema.stringProp(""),

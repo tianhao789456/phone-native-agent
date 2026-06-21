@@ -28,7 +28,9 @@ object MobileMemoryText {
         val lines = mutableListOf<String>()
         for (index in 0 until items.length()) {
             val item = items.optJSONObject(index) ?: continue
-            lines.add("${index + 1}. ${item.optString("text").ifBlank { readableMemoryItem(item) }.take(360)}")
+            val kind = item.optString("kind", item.optString("type", "memory")).ifBlank { "memory" }
+            val score = item.optInt("score", 0)
+            lines.add("${index + 1}. [$kind score=$score] ${item.optString("text").ifBlank { readableMemoryItem(item) }.take(360)}")
         }
         return lines.joinToString("\n")
     }
@@ -46,7 +48,13 @@ object MobileMemoryText {
                 else -> "note"
             }
             val scope = listOf(item.optString("app"), item.optString("tool_scope")).filter { it.isNotBlank() }.joinToString("/")
-            lines.add("${index + 1}. [$prefix${if (scope.isNotBlank()) " $scope" else ""}] ${item.optString("description").take(420)}")
+            val score = item.optInt("score", 0)
+            val confidence = item.optString("confidence", "")
+            val suffix = listOf(
+                if (score > 0) "score=$score" else "",
+                if (confidence.isNotBlank()) "confidence=$confidence" else ""
+            ).filter { it.isNotBlank() }.joinToString(" ")
+            lines.add("${index + 1}. [$prefix${if (scope.isNotBlank()) " $scope" else ""}${if (suffix.isNotBlank()) " $suffix" else ""}] ${item.optString("description").take(420)}")
         }
         return lines.joinToString("\n")
     }
@@ -56,7 +64,8 @@ object MobileMemoryText {
         val lines = mutableListOf<String>()
         for (index in 0 until items.length()) {
             val item = items.optJSONObject(index) ?: continue
-            lines.add("${index + 1}. [procedure ${item.optString("scope_key")}] ${item.optString("preview").take(420)}")
+            val score = item.optInt("score", 0)
+            lines.add("${index + 1}. [procedure ${item.optString("scope_key")}${if (score > 0) " score=$score" else ""}] ${item.optString("preview").take(420)}")
         }
         return lines.joinToString("\n")
     }
@@ -111,11 +120,24 @@ object MobileMemoryText {
     }
 
     fun tokenSet(text: String): Set<String> {
-        return Regex("[\\p{L}\\p{N}_]+")
-            .findAll(text.lowercase())
+        val normalized = text.lowercase()
+        val tokens = linkedSetOf<String>()
+        Regex("[\\p{L}\\p{N}_]+")
+            .findAll(normalized)
             .map { it.value }
             .filter { it.length >= 2 }
-            .toSet()
+            .forEach { tokens.add(it) }
+        Regex("[\\p{IsHan}]+")
+            .findAll(normalized)
+            .map { it.value }
+            .forEach { segment ->
+                if (segment.length >= 2) tokens.add(segment)
+                segment.forEach { ch -> tokens.add(ch.toString()) }
+                for (index in 0 until segment.length - 1) {
+                    tokens.add(segment.substring(index, index + 2))
+                }
+            }
+        return tokens
     }
 
     fun scoreTokens(query: Set<String>, text: Set<String>): Int {
@@ -130,6 +152,7 @@ object MobileMemoryText {
         if (normalizedQuery.isNotBlank() && normalizedText.contains(normalizedQuery)) score += 6
         queryTokens.forEach { token ->
             if (token.length >= 2 && normalizedText.contains(token)) score += 1
+            if (token.length == 1 && token.firstOrNull()?.let { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN } == true && normalizedText.contains(token)) score += 1
         }
         return score
     }

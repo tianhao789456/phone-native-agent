@@ -64,6 +64,7 @@ class NativeTaskLoopEngine(
                 .put("tool_calls", modelResponse.toolCalls)
             messages.put(assistant)
 
+            var stateChangingActionExecuted = false
             for (index in 0 until modelResponse.toolCalls.length()) {
                 if (stopController.isRequested(sessionId)) {
                     stoppedByUser = buildUserStopBlock(sessionId, "before_tool", modelResponse)
@@ -72,6 +73,52 @@ class NativeTaskLoopEngine(
                 val call = NativeToolCall.fromJson(modelResponse.toolCalls.getJSONObject(index))
                 val name = call.name
                 val arguments = call.arguments
+                if (stateChangingActionExecuted && stepEvaluator.isStateChangingAction(name)) {
+                    stepIndex += 1
+                    val skippedOutput = JSONObject()
+                        .put("ok", true)
+                        .put("skipped", true)
+                        .put("reason", "single_action_round")
+                        .put("message", "本轮已经执行过一个会改变状态的动作。请先观察、验证或更新计划，再决定下一步。")
+                    val skippedLoop = JSONObject()
+                        .put("enabled", true)
+                        .put("tool", name)
+                        .put("phase", "plan_act_verify_retry")
+                        .put("status", "skipped_single_action_round")
+                        .put("instruction", "Only one state-changing action is allowed per round. Reconsider this tool call after observation or verification.")
+                    val skippedVerification = JSONObject()
+                        .put("required", false)
+                        .put("ok", true)
+                        .put("status", "skipped_by_loop_policy")
+                    val skippedEvidence = JSONObject()
+                        .put("available", false)
+                        .put("kind", "")
+                        .put("tool", name)
+                    val skippedDecision = JSONObject()
+                        .put("status", "policy_skip")
+                        .put("summary", "single_action_round")
+                        .put("next_instruction", "Observe/verify/update plan before another state-changing action.")
+                    val artifacts = NativeToolStepArtifacts.build(
+                        call = call,
+                        toolCallIndex = index,
+                        step = stepIndex,
+                        round = toolRounds,
+                        durationMs = 0L,
+                        output = skippedOutput,
+                        state = "skipped",
+                        retriesLeft = 0,
+                        verification = skippedVerification,
+                        closedLoop = skippedLoop,
+                        evidence = skippedEvidence,
+                        verificationDecision = skippedDecision,
+                        summary = "本轮已执行过动作，跳过后续状态变更工具，等待下一轮观察/验证。",
+                        toolMessageContent = { loopStep -> stepEvaluator.toolMessageContent(skippedOutput, loopStep) }
+                    )
+                    toolTrace.put(artifacts.toolTraceItem)
+                    loopTrace.put(artifacts.loopStep)
+                    messages.put(artifacts.toolMessage)
+                    continue
+                }
                 stepIndex += 1
                 val startedAt = System.currentTimeMillis()
                 stepEvents.started(name, arguments, stepIndex, toolRounds)
@@ -126,6 +173,9 @@ class NativeTaskLoopEngine(
                 toolTrace.put(artifacts.toolTraceItem)
                 loopTrace.put(loopStep)
                 messages.put(artifacts.toolMessage)
+                if (stepEvaluator.isStateChangingAction(name)) {
+                    stateChangingActionExecuted = true
+                }
 
                 if (state != "success") {
                     val failureKey = stepEvaluator.failurePatternKey(name, output)
@@ -218,6 +268,7 @@ class NativeTaskLoopEngine(
                 failedSteps = failedSteps,
                 pendingVerification = pendingVerification,
                 evidence = loopEvidence,
+                taskPlan = taskPlan,
                 finalText = finalText
             ),
             stopRequested = stopController.isRequested(sessionId),

@@ -35,7 +35,36 @@ class NativeLoopStepEvaluator(
         } else {
             "Use concrete tool output, verification, or observation evidence before finalizing."
         }
-        return "Task loop round $round/$maxRounds finished: tool_calls=$toolCalls, failed_steps=$failedSteps. $verifyHint Continue only if more work is needed. If a tool failed, change strategy instead of repeating the same call. If the goal is satisfied, give a concise final report with evidence."
+        return "Task loop round $round/$maxRounds finished: tool_calls=$toolCalls, failed_steps=$failedSteps. $verifyHint Keep a strict plan -> one action -> observe -> verify rhythm: after one state-changing action, observe or update the plan before another action. Continue only if more work is needed. If a tool failed, change strategy instead of repeating the same call. If the goal is satisfied, give a concise final report with evidence."
+    }
+
+    fun isStateChangingAction(name: String): Boolean {
+        if (name in screenActionTools) return true
+        return name in setOf(
+            "terminal_run",
+            "terminal_script",
+            "terminal_task_cancel",
+            "recover_terminal_backend",
+            "ssh_run",
+            "ssh_script",
+            "ssh_connect",
+            "file_push",
+            "file_pull",
+            "mcp_call",
+            "pc_bridge_recover",
+            "pc_file_workflow",
+            "skill_run",
+            "experience_record",
+            "experience_update",
+            "experience_delete",
+            "memory_write",
+            "memory_update",
+            "memory_delete",
+            "procedure_generate",
+            "learning_start",
+            "learning_record",
+            "learning_stop"
+        )
     }
 
     fun evidenceFromStep(
@@ -131,25 +160,33 @@ class NativeLoopStepEvaluator(
         failedSteps: Int,
         pendingVerification: JSONObject?,
         evidence: JSONArray,
+        taskPlan: JSONObject,
         finalText: String
     ): JSONObject {
         val pendingOpen = pendingVerification != null && pendingVerification.length() > 0
         val evidenceCount = evidence.length()
-        val ok = status in setOf("completed", "no_tools") && failedSteps == 0 && !pendingOpen
+        val doneWhen = taskPlan.optJSONArray("done_when") ?: JSONArray()
+        val hasDoneWhen = doneWhen.length() > 0
+        val doneWhenSatisfied = !hasDoneWhen || evidenceCount > 0
+        val ok = status == "completed" && failedSteps == 0 && !pendingOpen && doneWhenSatisfied
         return JSONObject()
             .put("ok", ok)
             .put("status", if (ok) "verified_or_no_open_loop_items" else "needs_attention")
             .put("loop_status", status)
             .put("failed_steps", failedSteps)
             .put("evidence_count", evidenceCount)
+            .put("done_when", JSONArray(doneWhen.toString()))
+            .put("done_when_count", doneWhen.length())
+            .put("done_when_satisfied", doneWhenSatisfied)
+            .put("missing_done_when_evidence", hasDoneWhen && evidenceCount == 0)
             .put("pending_verification", pendingVerification ?: JSONObject())
             .put("final_answer_chars", finalText.length)
             .put(
                 "summary",
                 if (ok) {
-                    "Loop completed with $evidenceCount evidence item(s), $failedSteps failed step(s), and no open verification item."
+                    "Loop completed with $evidenceCount evidence item(s), $failedSteps failed step(s), no open verification item, and done_when satisfied."
                 } else {
-                    "Loop needs attention: failed_steps=$failedSteps, pending_verification=$pendingOpen, evidence_count=$evidenceCount."
+                    "Loop needs attention: failed_steps=$failedSteps, pending_verification=$pendingOpen, evidence_count=$evidenceCount, done_when_satisfied=$doneWhenSatisfied."
                 }
             )
             .put(
@@ -157,7 +194,7 @@ class NativeLoopStepEvaluator(
                 if (ok) {
                     "Final answer may cite evidence from task_loop.evidence or tool outputs."
                 } else {
-                    "Do not treat this as fully verified. Inspect pending_verification, failed steps, and task reports before continuing."
+                    "Do not treat this as fully verified. Inspect pending_verification, failed steps, done_when, and task reports before continuing."
                 }
             )
     }

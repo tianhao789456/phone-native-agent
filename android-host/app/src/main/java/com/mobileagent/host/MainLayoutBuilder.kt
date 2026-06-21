@@ -3,6 +3,8 @@ package com.mobileagent.host
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
@@ -32,64 +34,73 @@ object MainLayoutBuilder {
     ): MainLayoutViews {
         val root = LinearLayout(activity)
         root.orientation = LinearLayout.VERTICAL
-        root.setBackgroundColor(Color.rgb(247, 248, 250))
+        root.setBackgroundColor(SURFACE)
 
         val header = LinearLayout(activity)
         header.orientation = LinearLayout.VERTICAL
-        header.setPadding(28, statusBarHeight(activity) + 18, 28, 18)
-        header.setBackgroundColor(Color.rgb(21, 25, 31))
+        header.setPadding(dp(activity, 20), statusBarHeight(activity) + dp(activity, 12), dp(activity, 20), dp(activity, 12))
+        header.background = roundedBackground(HEADER, 0f)
+
+        val titleRow = LinearLayout(activity)
+        titleRow.orientation = LinearLayout.HORIZONTAL
+        titleRow.gravity = Gravity.CENTER_VERTICAL
 
         val title = TextView(activity)
         title.text = "手机 Agent"
         title.setTextColor(Color.WHITE)
-        title.textSize = 22f
+        title.textSize = 24f
+        title.typeface = Typeface.DEFAULT_BOLD
         title.gravity = Gravity.CENTER_VERTICAL
 
+        val panelButton = compactButton(activity, "面板")
+        panelButton.setOnClickListener { onPanelClick() }
+
+        titleRow.addView(
+            title,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        titleRow.addView(
+            panelButton,
+            LinearLayout.LayoutParams(dp(activity, 76), dp(activity, 42))
+        )
+
         val statusText = TextView(activity)
-        statusText.text = "正在检查中..."
-        statusText.setTextColor(Color.rgb(184, 194, 204))
-        statusText.textSize = 13f
-        statusText.setPadding(0, 6, 0, 0)
+        statusText.text = "正在检查..."
+        statusText.setTextColor(Color.rgb(226, 232, 240))
+        statusText.textSize = 14f
+        statusText.setPadding(0, dp(activity, 8), 0, 0)
 
         val detailStatusText = TextView(activity)
-        detailStatusText.text = "模型 - | 连接 - | 缓存 - | 权限 -"
-        detailStatusText.setTextColor(Color.rgb(148, 160, 172))
+        detailStatusText.text = "模型 - | 缓存 - | 权限 -"
+        detailStatusText.setTextColor(Color.rgb(148, 163, 184))
         detailStatusText.textSize = 12f
-        detailStatusText.setPadding(0, 4, 0, 0)
-
-        val panelButton = Button(activity)
-        panelButton.text = "操作面板"
-        panelButton.setOnClickListener { onPanelClick() }
+        detailStatusText.setPadding(0, dp(activity, 4), 0, 0)
+        detailStatusText.maxLines = 2
 
         val stopButton = Button(activity)
         stopButton.text = "停止"
+        stopButton.textSize = 14f
+        stopButton.isAllCaps = false
         stopButton.isEnabled = false
         stopButton.setOnClickListener { onStopClick() }
 
-        val actionRow = LinearLayout(activity)
-        actionRow.orientation = LinearLayout.HORIZONTAL
-        actionRow.gravity = Gravity.CENTER_VERTICAL
-        actionRow.setPadding(0, 10, 0, 0)
-        actionRow.addView(
-            panelButton,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        actionRow.addView(
-            stopButton,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        )
-
-        header.addView(title)
+        header.addView(titleRow)
         header.addView(statusText)
         header.addView(detailStatusText)
-        header.addView(actionRow)
+        header.addView(
+            stopButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(activity, 44)
+            ).apply { setMargins(0, dp(activity, 8), 0, 0) }
+        )
         root.addView(header)
 
         val scrollView = ScrollView(activity)
         scrollView.isFillViewport = true
         val messages = LinearLayout(activity)
         messages.orientation = LinearLayout.VERTICAL
-        messages.setPadding(20, 18, 20, 18)
+        messages.setPadding(dp(activity, 12), dp(activity, 12), dp(activity, 12), dp(activity, 12))
         scrollView.addView(messages)
         root.addView(
             scrollView,
@@ -102,18 +113,19 @@ object MainLayoutBuilder {
 
         val composer = LinearLayout(activity)
         composer.orientation = LinearLayout.HORIZONTAL
-        composer.gravity = Gravity.CENTER_VERTICAL
-        composer.setPadding(16, 12, 16, 16)
+        composer.gravity = Gravity.BOTTOM
+        composer.setPadding(dp(activity, 10), dp(activity, 8), dp(activity, 10), dp(activity, 10))
         composer.setBackgroundColor(Color.WHITE)
 
         val input = EditText(activity)
         input.hint = "输入消息"
         input.minLines = 1
-        input.maxLines = 3
+        input.maxLines = 4
         input.setSingleLine(false)
+        input.textSize = 15f
         input.imeOptions = EditorInfo.IME_ACTION_SEND
-        input.setBackgroundColor(Color.rgb(241, 243, 245))
-        input.setPadding(18, 10, 18, 10)
+        input.background = roundedBackground(Color.rgb(241, 245, 249), 18f)
+        input.setPadding(dp(activity, 14), dp(activity, 8), dp(activity, 14), dp(activity, 8))
         input.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
                 onSendClick()
@@ -125,6 +137,8 @@ object MainLayoutBuilder {
 
         val sendButton = Button(activity)
         sendButton.text = "发送"
+        sendButton.textSize = 15f
+        sendButton.isAllCaps = false
         sendButton.setOnClickListener { onSendClick() }
 
         composer.addView(
@@ -133,14 +147,11 @@ object MainLayoutBuilder {
                 0,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 1f
-            )
+            ).apply { setMargins(0, 0, dp(activity, 8), 0) }
         )
         composer.addView(
             sendButton,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            LinearLayout.LayoutParams(dp(activity, 76), LinearLayout.LayoutParams.WRAP_CONTENT)
         )
         root.addView(composer)
 
@@ -170,8 +181,31 @@ object MainLayoutBuilder {
         }
     }
 
+    private fun compactButton(activity: Activity, text: String): Button {
+        return Button(activity).apply {
+            this.text = text
+            textSize = 14f
+            isAllCaps = false
+            setPadding(dp(activity, 8), 0, dp(activity, 8), 0)
+        }
+    }
+
+    private fun dp(activity: Activity, value: Int): Int {
+        return (value * activity.resources.displayMetrics.density).toInt()
+    }
+
+    private fun roundedBackground(color: Int, radius: Float): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = radius
+        }
+    }
+
     private fun statusBarHeight(activity: Activity): Int {
         val resourceId = activity.resources.getIdentifier("status_bar_height", "dimen", "android")
         return if (resourceId > 0) activity.resources.getDimensionPixelSize(resourceId) else 0
     }
+
+    private val HEADER = Color.rgb(15, 23, 42)
+    private val SURFACE = Color.rgb(248, 250, 252)
 }

@@ -107,6 +107,16 @@ class MobileMemoryStore(context: Context) {
         return profileStore.writeMemory(arguments)
     }
 
+    fun updateMemory(arguments: JSONObject): JSONObject {
+        ensureFiles()
+        return profileStore.updateMemory(arguments)
+    }
+
+    fun deleteMemory(arguments: JSONObject): JSONObject {
+        ensureFiles()
+        return profileStore.deleteMemory(arguments)
+    }
+
     fun recordTask(task: String, status: String, finalAnswer: String, toolsUsed: JSONArray, appsUsed: JSONArray, runId: String): JSONObject {
         ensureFiles()
         return profileStore.recordTask(task, status, finalAnswer, toolsUsed, appsUsed, runId)
@@ -153,17 +163,34 @@ class MobileMemoryStore(context: Context) {
         val memoryItems = memory.optJSONArray("matches") ?: JSONArray()
         val procedureItems = procedures.optJSONArray("matches") ?: JSONArray()
         val experienceItems = exp.optJSONArray("matches") ?: JSONArray()
-        val content = buildString {
-            append("## Relevant Memory\n")
-            append(MobileMemoryText.formatMemory(memoryItems))
-            append("\n\n## Relevant Procedure\n")
-            append(MobileMemoryText.formatProcedures(procedureItems))
-            append("\n\n## Relevant Experience\n")
-            append(MobileMemoryText.formatExperience(experienceItems))
+        val hasMemory = memoryItems.length() > 0
+        val hasProcedures = procedureItems.length() > 0
+        val hasExperience = experienceItems.length() > 0
+        val content = if (hasMemory || hasProcedures || hasExperience) {
+            buildString {
+                append("## Memory Use Rules\n")
+                append("- Treat this as relevant context, not guaranteed truth.\n")
+                append("- Prefer the user's latest instruction and current tool evidence when they conflict.\n")
+                append("- Reuse procedures/experience before repeating blind actions.\n")
+                if (hasMemory) {
+                    append("\n## Relevant User Memory\n")
+                    append(MobileMemoryText.formatMemory(memoryItems))
+                }
+                if (hasProcedures) {
+                    append("\n\n## Relevant Procedure\n")
+                    append(MobileMemoryText.formatProcedures(procedureItems))
+                }
+                if (hasExperience) {
+                    append("\n\n## Relevant Experience\n")
+                    append(MobileMemoryText.formatExperience(experienceItems))
+                }
+            }
+                .replace(Regex("\n{3,}"), "\n\n")
+                .trim()
+                .take(6000)
+        } else {
+            ""
         }
-            .replace(Regex("\n{3,}"), "\n\n")
-            .trim()
-            .take(6000)
         return JSONObject()
             .put("ok", true)
             .put("injected", content.isNotBlank())

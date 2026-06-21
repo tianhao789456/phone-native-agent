@@ -12,7 +12,7 @@ class NativeToolVerifier(
                 .put("required", false)
                 .put("ok", false)
                 .put("status", "skipped_tool_failed")
-                .put("summary", "Tool failed before verification.")
+                .put("summary", "工具执行失败，已跳过自动验证。")
         }
         return when (name) {
             "write_file" -> verifyWorkspaceWrite(arguments, output)
@@ -29,7 +29,7 @@ class NativeToolVerifier(
                 .put("required", false)
                 .put("ok", true)
                 .put("status", "not_required")
-                .put("summary", "No automatic verification required for $name.")
+                .put("summary", "$name 不需要自动验证。")
         }
     }
 
@@ -38,7 +38,7 @@ class NativeToolVerifier(
         val path = result.optString("path", arguments.optString("path"))
         val expected = arguments.optString("content")
         if (path.isBlank()) {
-            return verificationFailed("workspace_write", "write_file returned no path")
+            return verificationFailed("workspace_write", "write_file 没有返回路径。")
         }
         val maxBytes = (expected.toByteArray(Charsets.UTF_8).size + 16).coerceAtLeast(1024)
         val readBack = runCatching { workspace.read(path, maxBytes) }
@@ -49,7 +49,7 @@ class NativeToolVerifier(
             .put("required", true)
             .put("ok", ok)
             .put("status", if (ok) "verified" else "content_mismatch")
-            .put("summary", if (ok) "Verified write_file by reading back $path." else "write_file verification failed for $path.")
+            .put("summary", if (ok) "已回读 $path，确认 write_file 写入成功。" else "write_file 回读验证失败：$path。")
             .put(
                 "evidence",
                 JSONObject()
@@ -62,7 +62,7 @@ class NativeToolVerifier(
     private fun verifyWorkspaceRestore(output: JSONObject): JSONObject {
         val result = output.optJSONObject("result") ?: JSONObject()
         val path = result.optString("path")
-        if (path.isBlank()) return verificationFailed("workspace_restore", "workspace_restore returned no path")
+        if (path.isBlank()) return verificationFailed("workspace_restore", "workspace_restore 没有返回路径。")
         val shouldExist = result.optBoolean("restored_exists", true)
         val readBack = runCatching { workspace.read(path, 1024) }.getOrNull()
         val ok = if (shouldExist) {
@@ -74,7 +74,7 @@ class NativeToolVerifier(
             .put("required", true)
             .put("ok", ok)
             .put("status", if (ok) "verified" else "restore_state_mismatch")
-            .put("summary", if (ok) "Verified workspace_restore state for $path." else "workspace_restore verification failed for $path.")
+            .put("summary", if (ok) "已确认 workspace_restore 状态：$path。" else "workspace_restore 状态验证失败：$path。")
             .put(
                 "evidence",
                 JSONObject()
@@ -97,9 +97,9 @@ class NativeToolVerifier(
             .put(
                 "summary",
                 if (ok) {
-                    "Verified page extraction from ${result.optString("source", "unknown")} with ${content.length} chars."
+                    "已验证网页提取结果：来源 ${result.optString("source", "unknown")}，内容 ${content.length} 字符。"
                 } else {
-                    "web_extract returned no usable title or content."
+                    "web_extract 没有返回可用标题或正文。"
                 }
             )
             .put(
@@ -122,7 +122,7 @@ class NativeToolVerifier(
             .put("required", true)
             .put("ok", ok)
             .put("status", if (ok) "verified" else "command_failed")
-            .put("summary", if (ok) "Verified terminal_run returncode=0." else "terminal_run verification failed: returncode=$returnCode timed_out=$timedOut.")
+            .put("summary", if (ok) "终端命令验证通过：returncode=0。" else "终端命令验证失败：returncode=$returnCode timed_out=$timedOut。")
             .put("evidence", JSONObject().put("returncode", returnCode).put("timed_out", timedOut))
     }
 
@@ -134,7 +134,7 @@ class NativeToolVerifier(
                 .put("required", false)
                 .put("ok", true)
                 .put("status", "deferred")
-                .put("summary", "terminal_script is running in background; verify with terminal_task_status.")
+                .put("summary", "终端脚本正在后台运行；请用 terminal_task_status 继续检查。")
                 .put("evidence", JSONObject().put("task_id", result.optString("task_id", "")))
         }
         val status = result.optString("status", "")
@@ -146,7 +146,7 @@ class NativeToolVerifier(
             .put("required", true)
             .put("ok", ok)
             .put("status", if (ok) "verified" else "script_failed")
-            .put("summary", if (ok) "Verified terminal_script completion." else "terminal_script verification failed: status=$status returncode=$returnCode timed_out=$timedOut.")
+            .put("summary", if (ok) "终端脚本验证通过。" else "终端脚本验证失败：status=$status returncode=$returnCode timed_out=$timedOut。")
             .put(
                 "evidence",
                 JSONObject()
@@ -166,7 +166,7 @@ class NativeToolVerifier(
             .put("required", true)
             .put("ok", ok)
             .put("status", if (ok) "verified" else "task_unhealthy")
-            .put("summary", if (ok) "Verified terminal task status." else "terminal task status is unhealthy: status=$status returncode=$returnCode.")
+            .put("summary", if (ok) "终端任务状态验证通过。" else "终端任务状态异常：status=$status returncode=$returnCode。")
             .put("evidence", JSONObject().put("status", status).put("returncode", returnCode).put("task_id", result.optString("task_id", "")))
     }
 
@@ -177,7 +177,7 @@ class NativeToolVerifier(
             .put("required", true)
             .put("ok", ok)
             .put("status", if (ok) "verified" else "connect_failed")
-            .put("summary", if (ok) "Verified SSH session is connected." else "ssh_connect did not establish a session.")
+            .put("summary", if (ok) "SSH 连接验证通过。" else "SSH 连接没有建立成功。")
             .put("evidence", JSONObject().put("connected", result.optBoolean("connected", false)).put("host", result.optString("host", "")))
     }
 
@@ -191,7 +191,7 @@ class NativeToolVerifier(
             .put("required", true)
             .put("ok", ok)
             .put("status", if (ok) "verified" else if (timedOut) "timeout" else "command_failed")
-            .put("summary", if (ok) "Verified ssh_run returncode=0." else "ssh_run verification failed: returncode=$returnCode timed_out=$timedOut.")
+            .put("summary", if (ok) "SSH 命令验证通过：returncode=0。" else "SSH 命令验证失败：returncode=$returnCode timed_out=$timedOut。")
             .put("evidence", JSONObject().put("returncode", returnCode).put("timed_out", timedOut))
     }
 
@@ -203,7 +203,7 @@ class NativeToolVerifier(
             .put("required", true)
             .put("ok", ok)
             .put("status", if (ok) "verified" else "transfer_failed")
-            .put("summary", if (ok) "Verified $toolName transfer." else "$toolName transfer failed.")
+            .put("summary", if (ok) "$toolName 文件传输验证通过。" else "$toolName 文件传输失败。")
             .put(
                 "evidence",
                 JSONObject()

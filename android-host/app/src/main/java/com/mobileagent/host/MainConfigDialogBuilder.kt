@@ -79,7 +79,7 @@ object MainConfigDialogBuilder {
             value = terminal.optString("base_url", AgentRuntimeConfig.DEFAULT_TERMINAL_BASE_URL),
         )
         layout.addView(terminalUrl)
-        addHint(context, layout, "终端服务地址示例：http://127.0.0.1:8787，非本机地址不建议配置。")
+        addHint(context, layout, "终端服务地址示例：http://127.0.0.1:8787。非本机地址请确认网络和权限。")
 
         addSectionTitle(context, layout, "Windows MCP", topPadding = 18)
         val mcpEnabled = CheckBox(context)
@@ -94,7 +94,7 @@ object MainConfigDialogBuilder {
         layout.addView(mcpUrl)
         val mcpToken = singleLineField(context, hint = "可选：填写 Bearer Token 或 MCP 鉴权 token")
         layout.addView(mcpToken)
-        addHint(context, layout, "地址示例：http://192.168.1.10:8931/mcp/；不填写 token 表示不变更已保存 token。")
+        addHint(context, layout, "地址示例：http://192.168.1.10:8931/mcp/。不填写 token 表示保留已保存 token。")
 
         addSectionTitle(context, layout, "SSH 连接", topPadding = 18)
         val sshEnabled = CheckBox(context)
@@ -126,7 +126,7 @@ object MainConfigDialogBuilder {
             context,
             layout,
             if (storageStatus.optBoolean("all_files_access", false)) {
-                "文件访问：已允许，可使用 shared_storage:/Download/... 传输下载/微信导出的文件。"
+                "文件访问：已允许，可使用 shared_storage:/Download/... 传输下载或微信导出的文件。"
             } else {
                 "文件访问：未允许。要传输 shared_storage:/Download/... 文件，请先打开授权页。"
             },

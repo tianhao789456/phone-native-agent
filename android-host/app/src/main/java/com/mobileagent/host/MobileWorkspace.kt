@@ -203,8 +203,10 @@ class MobileWorkspace(private val context: Context) {
         val raw = path.ifBlank { "." }.trim()
         val alias = resolveAliasedPath(raw)
         if (alias != null) return alias
+        val knownAbsolute = resolveKnownAbsolutePath(raw)
+        if (knownAbsolute != null) return knownAbsolute
         if (File(raw).isAbsolute) {
-            throw IllegalArgumentException("absolute paths require an explicit alias such as app_root:/, files_root:/, workspace:/, or shared_storage:/")
+            throw IllegalArgumentException("absolute paths require an explicit alias such as app_root:/, files_root:/, workspace:/, or shared_storage:/; Android shared storage paths like /storage/emulated/0/Download/... can be written as shared_storage:/Download/...")
         }
         val target = File(root, raw).canonicalFile
         val rootPath = root.canonicalFile.toPath()
@@ -212,6 +214,25 @@ class MobileWorkspace(private val context: Context) {
             throw SecurityException("path escapes APP workspace: $path")
         }
         return target
+    }
+
+    private fun resolveKnownAbsolutePath(raw: String): File? {
+        val file = File(raw)
+        if (!file.isAbsolute) return null
+        val target = file.canonicalFile
+        val allowedRoots = listOf(
+            root.canonicalFile,
+            context.filesDir.canonicalFile,
+            Environment.getExternalStorageDirectory().canonicalFile
+        )
+        val targetPath = target.toPath()
+        allowedRoots.forEach { base ->
+            val basePath = base.toPath()
+            if (targetPath == basePath || targetPath.startsWith(basePath)) {
+                return target
+            }
+        }
+        return null
     }
 
     private fun relativePath(file: File): String {

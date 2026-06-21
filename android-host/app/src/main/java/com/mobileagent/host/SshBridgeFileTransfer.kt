@@ -13,21 +13,25 @@ class SshBridgeFileTransfer(
     private val setLastError: (String) -> Unit
 ) {
     fun push(current: Session, localPath: String, remotePath: String, overwrite: Boolean = true): JSONObject {
-        val localFile = workspace.resolvePath(localPath)
+        val localFile = resolveLocalPath(localPath) ?: return fail(
+            "local path cannot be resolved: $localPath. Use aliases such as shared_storage:/Download/..., files_root:/..., or workspace:/..."
+        )
         if (!localFile.exists() || !localFile.isFile) return fail("local file not found: $localPath")
+        val normalizedRemotePath = normalizeRemoteSftpPath(remotePath)
         val sftp = openSftp(current) ?: return fail("open sftp channel failed")
         try {
-            ensureRemoteDirectory(sftp, remotePath)
-            if (!overwrite && remoteExists(sftp, remotePath)) return fail("remote file exists and overwrite is false: $remotePath")
-            sftp.put(localFile.absolutePath, remotePath, if (overwrite) ChannelSftp.OVERWRITE else ChannelSftp.RESUME)
-            val stat = runCatching { sftp.stat(remotePath) }.getOrNull()
+            ensureRemoteDirectory(sftp, normalizedRemotePath)
+            if (!overwrite && remoteExists(sftp, normalizedRemotePath)) return fail("remote file exists and overwrite is false: $normalizedRemotePath")
+            sftp.put(localFile.absolutePath, normalizedRemotePath, if (overwrite) ChannelSftp.OVERWRITE else ChannelSftp.RESUME)
+            val stat = runCatching { sftp.stat(normalizedRemotePath) }.getOrNull()
             val result = JSONObject()
                 .put("local_path", localFile.canonicalPath)
-                .put("remote_path", remotePath)
+                .put("remote_path", normalizedRemotePath)
+                .put("requested_remote_path", remotePath)
                 .put("bytes", localFile.length())
                 .put("overwrite", overwrite)
                 .put("remote_size", stat?.size ?: -1)
-            log("info", "ssh", "ssh file pushed", JSONObject().put("local_path", localFile.canonicalPath).put("remote_path", remotePath))
+            log("info", "ssh", "ssh file pushed", JSONObject().put("local_path", localFile.canonicalPath).put("remote_path", normalizedRemotePath))
             return JSONObject().put("ok", true).put("status", "ok").put("result", result)
         } catch (exc: Exception) {
             setLastError(exc.message ?: exc.javaClass.simpleName)
@@ -38,26 +42,30 @@ class SshBridgeFileTransfer(
     }
 
     fun pull(current: Session, remotePath: String, localPath: String = "", overwrite: Boolean = true): JSONObject {
+        val normalizedRemotePath = normalizeRemoteSftpPath(remotePath)
         val sftp = openSftp(current) ?: return fail("open sftp channel failed")
         try {
             val targetPath = if (localPath.isBlank()) {
-                "workspace:/ssh/${remotePath.substringAfterLast('/', "download.txt")}"
+                "workspace:/ssh/${normalizedRemotePath.substringAfterLast('/', "download.txt")}"
             } else {
                 localPath
             }
-            val localFile = workspace.resolvePath(targetPath)
+            val localFile = resolveLocalPath(targetPath) ?: return fail(
+                "local path cannot be resolved: $targetPath. Use aliases such as shared_storage:/Download/..., files_root:/..., or workspace:/..."
+            )
             if (localFile.exists() && localFile.isFile && !overwrite) return fail("local file exists and overwrite is false: $targetPath")
             localFile.parentFile?.mkdirs()
             if (localFile.exists() && overwrite) runCatching { localFile.delete() }
-            FileOutputStream(localFile).use { output -> sftp.get(remotePath, output) }
-            val stat = runCatching { sftp.stat(remotePath) }.getOrNull()
+            FileOutputStream(localFile).use { output -> sftp.get(normalizedRemotePath, output) }
+            val stat = runCatching { sftp.stat(normalizedRemotePath) }.getOrNull()
             val result = JSONObject()
-                .put("remote_path", remotePath)
+                .put("remote_path", normalizedRemotePath)
+                .put("requested_remote_path", remotePath)
                 .put("local_path", localFile.canonicalPath)
                 .put("bytes", localFile.length())
                 .put("overwrite", overwrite)
                 .put("remote_size", stat?.size ?: -1)
-            log("info", "ssh", "ssh file pulled", JSONObject().put("remote_path", remotePath).put("local_path", localFile.canonicalPath))
+            log("info", "ssh", "ssh file pulled", JSONObject().put("remote_path", normalizedRemotePath).put("local_path", localFile.canonicalPath))
             return JSONObject().put("ok", true).put("status", "ok").put("result", result)
         } catch (exc: Exception) {
             setLastError(exc.message ?: exc.javaClass.simpleName)
@@ -73,6 +81,17 @@ class SshBridgeFileTransfer(
         }.onFailure {
             setLastError("open sftp channel failed: ${SshBridgeDiagnostics.formatException(it)}")
         }.getOrNull()
+    }
+
+    private fun resolveLocalPath(path: String): java.io.File? {
+        return runCatching { workspace.resolvePath(path) }
+            .onFailure { setLastError(it.message ?: it.javaClass.simpleName) }
+            .getOrNull()
+    }
+
+    private fun normalizeRemoteSftpPath(path: String): String {
+        val normalized = path.trim().replace('\\', '/')
+        return if (Regex("^[A-Za-z]:/.*").matches(normalized)) "/$normalized" else normalized
     }
 
     private fun remoteExists(sftp: ChannelSftp, remotePath: String): Boolean {

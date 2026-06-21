@@ -1,7 +1,7 @@
 package com.mobileagent.host
 
-import android.app.AlertDialog
 import android.app.Activity
+import android.app.AlertDialog
 
 class MainConfigDialogController(
     private val activity: Activity,
@@ -76,7 +76,7 @@ class MainConfigDialogController(
         val label = MainStatusFormatter.permissionLabel(mode)
         AlertDialog.Builder(activity)
             .setTitle("确认$label")
-            .setMessage("$label 模式较高，请确认是本人且可接受其影响后才继续。确认后系统将按该模式执行指令。")
+            .setMessage("$label 模式权限较高，请确认是本人操作且接受影响后再继续。确认后系统会按该模式执行指令。")
             .setNegativeButton("取消", null)
             .setPositiveButton("确认") { _, _ -> onConfirmed() }
             .show()

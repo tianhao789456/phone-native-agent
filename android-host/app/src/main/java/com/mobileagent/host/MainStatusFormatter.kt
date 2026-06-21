@@ -18,16 +18,10 @@ object MainStatusFormatter {
         val usage = status.optJSONObject("usage")
         val latestHit = usage?.optLong("prompt_cache_hit_tokens", 0L) ?: 0L
         val latestMiss = usage?.optLong("prompt_cache_miss_tokens", 0L) ?: 0L
-        val sessionUsage = usage?.optJSONObject("session")
-        val sessionHit = sessionUsage?.optLong("prompt_cache_hit_tokens", 0L) ?: 0L
-        val sessionMiss = sessionUsage?.optLong("prompt_cache_miss_tokens", 0L) ?: 0L
         val request = usage?.optJSONObject("cache_diagnostics")?.optJSONObject("request")
             ?: usage?.optJSONObject("mobile_agent_request")
         val toolCount = request?.optInt("tool_count", 0) ?: 0
-        val cache = listOf(
-            cacheSummary(latestHit, latestMiss, "本轮"),
-            cacheSummary(sessionHit, sessionMiss, "会话")
-        ).filter { it.isNotBlank() }.joinToString(" | ")
+        val cache = cacheSummary(latestHit, latestMiss, "本轮")
         val terminalLabel = terminalRuntimeLabel(status.optJSONObject("terminal_runtime"), status.optJSONObject("terminal"))
         val mcpLabel = mcpRuntimeLabel(status.optJSONObject("mcp_runtime"), status.optJSONObject("mcp"))
         val rawContextText = if (window > 0 && !usedPercent.isNaN()) {

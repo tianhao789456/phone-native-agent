@@ -75,11 +75,11 @@ object DiagnosticTraceFormatter {
         }
         val recovery = result.optJSONObject("recovery") ?: JSONObject()
         val recoveryText = when {
-            recovery.optBoolean("skipped", false) -> "未执行"
+            recovery.optBoolean("skipped", false) -> "未执行恢复"
             recovery.optBoolean("ok", false) -> "恢复成功"
             recovery.length() > 0 -> "重连中"
-            else -> "未执行"
+            else -> "未执行恢复"
         }
-        return "重连完成: $terminalText | $accessibilityText | $recoveryText"
+        return "重连完成：$terminalText | $accessibilityText | $recoveryText"
     }
 }

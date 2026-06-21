@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -335,6 +335,7 @@ def test_native_loop_step_evaluation_is_split_from_core_loop() -> None:
         "fun evidenceFromStep(",
         "fun updateVerificationState(",
         "fun completionReview(",
+        "fun isStateChangingAction(",
         "fun buildLoopGuardStop(",
     ):
         assert symbol in evaluator
@@ -352,6 +353,10 @@ def test_native_loop_step_evaluation_is_split_from_core_loop() -> None:
     assert "stepEvaluator.closedLoopStep(" in loop_engine
     assert "stepEvaluator.updateVerificationState(" in loop_engine
     assert "stepEvaluator.completionReview(" in loop_engine
+    assert "taskPlan = taskPlan" in loop_engine
+    assert "stateChangingActionExecuted" in loop_engine
+    assert "single_action_round" in loop_engine
+    assert "stepEvaluator.isStateChangingAction(name)" in loop_engine
     assert "stepEvaluator.closedLoopStep(" not in core
     assert "stepEvaluator.updateVerificationState(" not in core
     assert "stepEvaluator.completionReview(" not in core
@@ -359,6 +364,35 @@ def test_native_loop_step_evaluation_is_split_from_core_loop() -> None:
     assert "private fun toolStepSummary(" not in core
     assert "private fun closedLoopStep(" not in core
     assert "private fun updateVerificationState(" not in core
+
+
+def test_native_task_loop_has_done_when_completion_gate_and_failure_memory() -> None:
+    plan = read(KOTLIN_SRC / "NativeTaskPlanController.kt")
+    planning_catalog = read(KOTLIN_SRC / "NativePlanningToolCatalog.kt")
+    chat_controller = read(KOTLIN_SRC / "NativeChatController.kt")
+    evaluator = read(KOTLIN_SRC / "NativeLoopStepEvaluator.kt")
+    memory = read(KOTLIN_SRC / "NativeTaskMemoryCoordinator.kt")
+    profile = read(KOTLIN_SRC / "NativeAgentProfile.kt")
+
+    assert 'taskPlan.put("done_when", sanitizeDoneWhen(incomingDoneWhen))' in plan
+    assert "private fun sanitizeDoneWhen(values: JSONArray)" in plan
+    assert '"done_when" to NativeToolSchema.arrayProp()' in planning_catalog
+    assert '.put("done_when", JSONArray())' in chat_controller
+
+    assert "taskPlan: JSONObject" in evaluator
+    assert 'val doneWhen = taskPlan.optJSONArray("done_when") ?: JSONArray()' in evaluator
+    assert 'status == "completed" && failedSteps == 0 && !pendingOpen && doneWhenSatisfied' in evaluator
+    assert '"missing_done_when_evidence"' in evaluator
+    assert "done_when_satisfied" in evaluator
+
+    assert "fun recordLoopFailureExperience(" in memory
+    assert '"lesson_type", "failed_approach"' in memory
+    assert "scopeForTool(tool)" in memory
+    assert "recordLoopFailureExperience(" in chat_controller
+    assert '"loop_failure_experience"' in chat_controller
+
+    assert "done_when criteria" in profile
+    assert "Use exactly one state-changing action per loop round" in profile
 
 
 def test_native_loop_guard_state_is_split_from_chat_loop() -> None:
@@ -517,10 +551,17 @@ def test_ssh_bridge_command_and_diagnostics_helpers_are_split() -> None:
     assert "class SshBridgeFileTransfer(" in file_transfer
     assert "fun push(current: Session, localPath: String, remotePath: String, overwrite: Boolean = true)" in file_transfer
     assert "fun pull(current: Session, remotePath: String, localPath: String = \"\", overwrite: Boolean = true)" in file_transfer
+    assert "private fun resolveLocalPath(path: String): java.io.File?" in file_transfer
+    assert "private fun normalizeRemoteSftpPath(path: String): String" in file_transfer
+    assert 'Regex("^[A-Za-z]:/.*")' in file_transfer
+    assert '"/$normalized"' in file_transfer
+    assert '.put("requested_remote_path", remotePath)' in file_transfer
+    assert "local path cannot be resolved" in file_transfer
+    assert "shared_storage:/Download/..." in file_transfer
     assert "private fun openSftp(session: Session): ChannelSftp?" in file_transfer
     assert "private fun ensureRemoteDirectory(sftp: ChannelSftp, remotePath: String)" in file_transfer
     assert "FileOutputStream(localFile).use" in file_transfer
-    assert "sftp.put(localFile.absolutePath, remotePath" in file_transfer
+    assert "sftp.put(localFile.absolutePath, normalizedRemotePath" in file_transfer
 
     assert "private val fileTransfer = SshBridgeFileTransfer(" in bridge
     assert "return fileTransfer.push(current, localPath, remotePath, overwrite)" in bridge
@@ -528,6 +569,21 @@ def test_ssh_bridge_command_and_diagnostics_helpers_are_split() -> None:
     assert "private fun openSftp(" not in bridge
     assert "private fun remoteExists(" not in bridge
     assert "private fun ensureRemoteDirectory(" not in bridge
+
+
+def test_mobile_workspace_accepts_known_android_absolute_paths_for_transfer() -> None:
+    workspace = read(KOTLIN_SRC / "MobileWorkspace.kt")
+    ssh_catalog = read(KOTLIN_SRC / "NativeSshToolCatalog.kt")
+
+    assert "private fun resolveKnownAbsolutePath(raw: String): File?" in workspace
+    assert "Environment.getExternalStorageDirectory().canonicalFile" in workspace
+    assert "context.filesDir.canonicalFile" in workspace
+    assert "val knownAbsolute = resolveKnownAbsolutePath(raw)" in workspace
+    assert "if (knownAbsolute != null) return knownAbsolute" in workspace
+    assert "Android shared storage paths like /storage/emulated/0/Download/..." in workspace
+    assert "Android absolute paths under /storage/emulated/0/... are accepted" in ssh_catalog
+    assert "should be normalized to shared_storage:/..." in ssh_catalog
+    assert "C:/Users/... is accepted and normalized to /C:/Users/..." in ssh_catalog
 
 
 def test_native_tool_executor_owns_unified_tool_routing() -> None:
@@ -654,7 +710,7 @@ def test_native_terminal_client_owns_termux_http_backend() -> None:
 
 
 def test_android_kotlin_sources_do_not_contain_mojibake_markers() -> None:
-    markers = ("缁", "鍚", "銆", "锛", "鈧", "闂", "�")
+    markers = ("\ufffd", "锟斤拷")
     offenders: list[str] = []
     for path in KOTLIN_SRC.glob("*.kt"):
         text = read(path)
@@ -742,8 +798,22 @@ def test_main_message_renderer_is_split_from_activity() -> None:
 
     assert "class MainMessageRenderer(" in renderer
     assert "fun render(role: String, text: String, detail: String? = null)" in renderer
-    assert 'bubble.text = "$role\\n$text"' in renderer
-    assert 'detailsDialogController.showScrollable("$role details", detail)' in renderer
+    assert 'val visibleText = "$role\\n$text"' in renderer
+    assert "bubble.text = text" in renderer
+    assert "showMessageActions(role, visibleText, detail)" in renderer
+    assert 'detailsDialogController.showScrollable("$role 详情", detail)' in renderer
+    assert "bubble.setOnLongClickListener" in renderer
+    assert 'val labels = mutableListOf("复制消息", "分享消息")' in renderer
+    assert 'labels.add("复制详情")' in renderer
+    assert 'labels.add("查看详情")' in renderer
+    assert "ClipData.newPlainText(label, text)" in renderer
+    assert "Intent(Intent.ACTION_SEND)" in renderer
+    assert 'Intent.createChooser(intent, "分享消息")' in renderer
+    assert 'Toast.makeText(activity, "已复制", Toast.LENGTH_SHORT).show()' in renderer
+    assert '"我" -> Color.rgb(219, 234, 254)' in renderer
+    assert '"助手" -> Color.WHITE' in renderer
+    assert '"工具" -> Color.rgb(240, 253, 244)' in renderer
+    assert '"错误" -> Color.rgb(254, 242, 242)' in renderer
     assert 'scrollView.post { scrollView.fullScroll(ScrollView.FOCUS_DOWN) }' in renderer
 
     assert "private lateinit var messageRenderer: MainMessageRenderer" in main
@@ -948,13 +1018,20 @@ def test_main_local_command_parser_is_split_from_activity() -> None:
 
 def test_main_local_command_runner_is_split_from_activity() -> None:
     runner = read(KOTLIN_SRC / "MainLocalCommandRunner.kt")
+    catalog = read(KOTLIN_SRC / "MainCommandCatalog.kt")
     main = read(KOTLIN_SRC / "MainActivity.kt")
 
     assert "class MainLocalCommandRunner" in runner
     assert "interface Actions" in runner
     assert "fun run(command: String)" in runner
     assert "private fun runParameterized(command: String)" in runner
-    assert "const val HELP_TEXT" in runner
+    assert "val HELP_TEXT: String = MainCommandCatalog.helpText()" in runner
+    assert "object MainCommandCatalog" in catalog
+    assert "fun helpText()" in catalog
+    assert "fun docsText()" in catalog
+    assert 'MainCommandInfo("-commands", "命令大全"' in catalog
+    assert 'MainCommandInfo("-mcp tools", "MCP 工具"' in catalog
+    assert 'MainCommandInfo("-ssh connect", "连接 SSH"' in catalog
     assert '"terminal:"' in runner
     assert '"mcp:"' in runner
     assert '"ssh:"' in runner
@@ -1001,9 +1078,8 @@ def test_main_config_dialog_builder_is_split_from_activity() -> None:
     assert 'addSectionTitle(context, layout, "终端接口", topPadding = 18)' in builder
     assert 'addSectionTitle(context, layout, "SSH 连接", topPadding = 18)' in builder
     assert 'storageButton.text = "打开文件访问授权"' in builder
-    assert "锛" not in builder
-    assert "绯" not in builder
-    assert "鏉" not in builder
+    assert "锟斤拷" not in builder
+    assert "\ufffd" not in builder
 
     assert "class MainConfigDialogController(" in controller
     assert "fun show()" in controller
@@ -1101,6 +1177,36 @@ def test_main_runtime_dialog_controller_is_split_from_activity() -> None:
     assert "nativeCore.terminalHealthForUi(autoRecover)" not in main
 
 
+def test_runtime_panels_use_human_readable_summaries() -> None:
+    controller = read(KOTLIN_SRC / "MainRuntimeDialogController.kt")
+    formatter = read(KOTLIN_SRC / "MainRuntimeSummaryFormatter.kt")
+    panel = read(KOTLIN_SRC / "MainPanelSummaryFormatter.kt")
+
+    assert "object MainRuntimeSummaryFormatter" in formatter
+    for method in (
+        "mcpStatus",
+        "mcpTools",
+        "sshStatus",
+        "sshConnect",
+        "sshDiagnose",
+        "sshSelectHost",
+        "terminalStatus",
+        "terminalHealth",
+        "systemLogs",
+    ):
+        assert f"fun {method}(result: JSONObject)" in formatter
+        assert f"MainRuntimeSummaryFormatter.{method}(" in controller
+
+    assert 'addMessage("系统", "MCP 状态：\\n${it.toString(2)}", null)' not in controller
+    assert 'addMessage("系统", "SSH 状态：\\n${it.toString(2)}", null)' not in controller
+    assert 'addMessage("系统", "终端接口状态：\\n${it.toString(2)}", null)' not in controller
+    assert "这里不写死工具清单" in formatter
+    assert "未识别的新工具会放到“其他能力”" in formatter
+    assert "按用途分组" in panel
+    assert "不写死工具清单" in panel
+    assert "Agent 真正调用时会用 tool_info 查看参数" in panel
+
+
 def test_main_failure_controller_is_split_from_activity() -> None:
     controller = read(KOTLIN_SRC / "MainFailureController.kt")
     main = read(KOTLIN_SRC / "MainActivity.kt")
@@ -1156,6 +1262,12 @@ def test_main_conversation_controller_is_split_from_activity() -> None:
     assert "private fun localizeRole(" not in main
     assert "private fun localizeSavedText(" not in main
     assert "private data class SavedMessage" not in main
+    assert '"system" -> "系统"' in conversation_controller
+    assert '"you" -> "我"' in conversation_controller
+    assert '"agent" -> "助手"' in conversation_controller
+    assert '"tools" -> "工具"' in conversation_controller
+    assert '"error" -> "错误"' in conversation_controller
+    assert '"[API Key 已隐藏]"' in conversation_controller
 
 
 def test_main_details_dialog_controller_is_split_from_activity() -> None:
@@ -1165,6 +1277,7 @@ def test_main_details_dialog_controller_is_split_from_activity() -> None:
     assert "class MainDetailsDialogController(" in controller
     assert "fun show(" in controller
     assert "fun showScrollable(" in controller
+    assert '.setPositiveButton("确定", null)' in controller
     assert "private lateinit var detailsDialogController: MainDetailsDialogController" in main
     assert "private fun showDetails(" not in main
     assert "private fun showDetailsScrollable(" not in main
@@ -1180,13 +1293,32 @@ def test_main_action_panel_controller_is_split_from_activity() -> None:
     assert 'addPanelButton("重连 / 自检")' in controller
     assert 'addPanelButton("MCP 工具")' in controller
     assert 'addPanelButton("记忆/经验")' in controller
+    assert 'addPanelButton("命令大全")' in controller
     assert 'addPanelButton("继续处理失败")' in controller
 
     assert "private lateinit var actionPanelController: MainActionPanelController" in main
+    assert "private lateinit var commandCatalogDialogController: MainCommandCatalogDialogController" in main
+    assert "private fun createCommandCatalogDialogController()" in main
+    assert "commandCatalogDialogController.show()" in main
+    assert "private fun fillInputWithCommand(command: String)" in main
     assert "private fun createActionPanelController()" in main
     assert "actionPanelController.show()" in main
     assert "fun addPanelButton(" not in main
-    assert 'addPanelButton("MCP 工具")' not in main
+    assert 'addPanelButton("MCP 工具")' in controller
+
+
+def test_official_commands_doc_uses_command_catalog() -> None:
+    docs = read(KOTLIN_SRC / "MobileAgentDocs.kt")
+    parser = read(KOTLIN_SRC / "MainLocalCommandParser.kt")
+    dialog = read(KOTLIN_SRC / "MainCommandCatalogDialogController.kt")
+
+    assert "return MainCommandCatalog.docsText()" in docs
+    assert '"commands", "-commands", "--commands", "/commands"' in parser
+    assert "class MainCommandCatalogDialogController(" in dialog
+    assert "copyCommand(item.command)" in dialog
+    assert "fillInput(item.command)" in dialog
+    assert 'copyButton.text = "复制"' in dialog
+    assert 'fillButton.text = "填入"' in dialog
 
 
 def test_main_settings_command_controller_is_split_from_activity() -> None:
@@ -1620,6 +1752,7 @@ def test_native_skill_layer_progressively_unifies_plugins_and_procedures() -> No
 def test_model_request_and_usage_are_cache_prefix_friendly() -> None:
     model_client = read(KOTLIN_SRC / "NativeModelClient.kt")
     context_manager = read(KOTLIN_SRC / "NativeContextManager.kt")
+    core = read(KOTLIN_SRC / "NativeAgentCore.kt")
     registry = read(KOTLIN_SRC / "NativeToolRegistry.kt")
     formatter = read(KOTLIN_SRC / "MainStatusFormatter.kt")
 
@@ -1638,11 +1771,78 @@ def test_model_request_and_usage_are_cache_prefix_friendly() -> None:
     assert '"hit_rate_basis"' in context_manager
     assert '"latest_cacheable_tokens"' in context_manager
     assert "stable_system_and_sorted_tools_before_dynamic_messages" in context_manager
+    assert "fun resetUsage(sessionId: String)" in context_manager
+    assert "contextManager.resetUsage(sessionId)" in core
 
     assert 'cacheSummary(latestHit, latestMiss, "本轮")' in formatter
-    assert 'cacheSummary(sessionHit, sessionMiss, "会话")' in formatter
+    assert "sessionHit" not in formatter
+    assert "sessionMiss" not in formatter
+    assert 'cacheSummary(sessionHit, sessionMiss, "会话")' not in formatter
     assert "$label 命中率" in formatter
     assert "工具 $toolCount" in formatter
+
+
+def test_native_agent_profile_defaults_to_simplified_chinese_for_chat() -> None:
+    profile = read(KOTLIN_SRC / "NativeAgentProfile.kt")
+    chat_controller = read(KOTLIN_SRC / "NativeChatController.kt")
+    stop_flow = read(KOTLIN_SRC / "NativeStopFlowController.kt")
+    verifier = read(KOTLIN_SRC / "NativeToolVerifier.kt")
+    trace_formatter = read(KOTLIN_SRC / "ToolTraceFormatter.kt")
+
+    assert 'const val SYSTEM_PROMPT_VERSION = "mobile-agent-core-v18"' in profile
+    assert "Default to concise Simplified Chinese" in profile
+    assert "Do not use Traditional Chinese" in profile
+    assert "If the user asks you to speak Chinese, do not call tools" in profile
+    assert "If the user asks you to speak Chinese, do not call tools" in profile
+    assert "For pure chat, explanations, planning, product questions, status questions, or preference changes, answer directly" in profile
+    assert "Use progressive loading. Start with compact discovery tools." in profile
+    assert "done_when" in profile
+    assert "Use exactly one state-changing action per loop round" in profile
+    assert "Treat injected memory as helpful context, not absolute truth" in profile
+    assert "Use memory_update/memory_delete" in profile
+    assert "默认使用简体中文回复" in chat_controller
+    assert "如果这只是聊天、语言偏好或解释问题，不要为了确认状态而调用工具" in chat_controller
+    assert "任务已暂停，避免继续重复失败" in stop_flow
+    assert "终端命令验证失败" in verifier
+    assert "verificationFailed -> \"失败\"" in trace_formatter
+    assert "验证失败" in trace_formatter
+
+
+def test_native_memory_recall_injection_and_profile_crud_are_explicit() -> None:
+    store = read(KOTLIN_SRC / "MobileMemoryStore.kt")
+    profile_store = read(KOTLIN_SRC / "MobileMemoryProfileStore.kt")
+    memory_text = read(KOTLIN_SRC / "MobileMemoryText.kt")
+    catalog = read(KOTLIN_SRC / "NativeMemoryToolCatalog.kt")
+    dispatcher = read(KOTLIN_SRC / "NativeMemoryToolDispatcher.kt")
+    requester = read(KOTLIN_SRC / "NativeModelRequester.kt")
+    context_manager = read(KOTLIN_SRC / "NativeContextManager.kt")
+
+    assert "fun updateMemory(arguments: JSONObject)" in store
+    assert "fun deleteMemory(arguments: JSONObject)" in store
+    assert "return profileStore.updateMemory(arguments)" in store
+    assert "return profileStore.deleteMemory(arguments)" in store
+    assert "val hasMemory = memoryItems.length() > 0" in store
+    assert "val hasProcedures = procedureItems.length() > 0" in store
+    assert "val hasExperience = experienceItems.length() > 0" in store
+    assert '"injected", content.isNotBlank()' in store
+    assert "## Memory Use Rules" in store
+    assert "Treat this as relevant context, not guaranteed truth" in store
+
+    assert "fun updateMemory(arguments: JSONObject)" in profile_store
+    assert "fun deleteMemory(arguments: JSONObject)" in profile_store
+    assert "memory item not found; provide target plus key or text" in profile_store
+    assert "target plus key or text" in catalog
+    assert 'name = "memory_update"' in catalog
+    assert 'name = "memory_delete"' in catalog
+    assert '"memory_update" -> memory.updateMemory(arguments)' in dispatcher
+    assert '"memory_delete" -> memory.deleteMemory(arguments)' in dispatcher
+
+    assert r'Regex("[\\p{IsHan}]+")' in memory_text
+    assert "score=$score" in memory_text
+    assert "[MOBILE_AGENT_RELEVANT_MEMORY_V2]" in requester
+    assert "上下文自动压缩摘要" in context_manager
+    assert "最近用户消息" in context_manager
+    assert "涓" not in context_manager
 
 
 def test_native_pc_bridge_scripts_are_split_from_core_bridge_flow() -> None:

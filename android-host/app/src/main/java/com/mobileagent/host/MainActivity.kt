@@ -34,6 +34,7 @@ class MainActivity : Activity() {
     private lateinit var runtimeDialogController: MainRuntimeDialogController
     private lateinit var configDialogController: MainConfigDialogController
     private lateinit var actionPanelController: MainActionPanelController
+    private lateinit var commandCatalogDialogController: MainCommandCatalogDialogController
     private lateinit var settingsCommandController: MainSettingsCommandController
     private lateinit var failureController: MainFailureController
     private lateinit var detailsDialogController: MainDetailsDialogController
@@ -73,6 +74,7 @@ class MainActivity : Activity() {
         localCommandRunner = createLocalCommandRunner()
         memoryDialogController = createMemoryDialogController()
         runtimeDialogController = createRuntimeDialogController()
+        commandCatalogDialogController = createCommandCatalogDialogController()
         actionPanelController = createActionPanelController()
         settingsCommandController = createSettingsCommandController()
         failureController = createFailureController()
@@ -224,6 +226,7 @@ class MainActivity : Activity() {
             override fun showOfficialDocs() {
                 addMessage("系统", MainPanelSummaryFormatter.officialDocsSummary(nativeCore.docsIndexForUi()))
             }
+            override fun showCommandCatalog() = commandCatalogDialogController.show()
             override fun showMemoryExperience() = showMemoryExperiencePanel()
             override fun startLearning() = showLearningStartDialog()
             override fun stopLearning() = stopLearningMode()
@@ -231,6 +234,14 @@ class MainActivity : Activity() {
             override fun cancelRunningTerminalTasks() = this@MainActivity.failureController.cancelRunningTerminalTasks()
             override fun continueFailedTask() = this@MainActivity.failureController.continueFailedTask()
         })
+    }
+
+    private fun createCommandCatalogDialogController(): MainCommandCatalogDialogController {
+        return MainCommandCatalogDialogController(
+            activity = this,
+            fillInput = { command -> fillInputWithCommand(command) },
+            addMessage = { role, text -> addMessage(role, text) }
+        )
     }
 
     private fun createSettingsCommandController(): MainSettingsCommandController {
@@ -327,6 +338,14 @@ class MainActivity : Activity() {
 
     private fun runLocalCommand(command: String) {
         localCommandRunner.run(command)
+    }
+
+    private fun fillInputWithCommand(command: String) {
+        input.setText(command)
+        input.setSelection(input.text.length)
+        input.requestFocus()
+        val manager = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        manager.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
     }
 
     private fun setMaxToolRoundsFromCommand(value: String) {

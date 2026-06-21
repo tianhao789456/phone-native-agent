@@ -38,19 +38,16 @@ class MainStatusController(
             val host = accessibilityStatus()
             ui.post {
                 val status = core.getOrNull()
-                val coreLabel = if (status?.optBoolean("ok") == true) {
-                    "核心可用"
-                } else {
-                    "核心离线"
-                }
+                val coreLabel = if (status?.optBoolean("ok") == true) "核心可用" else "核心离线"
                 val accessibilityLabel = when {
                     host.optBoolean("connected") -> "无障碍已连接"
                     host.optBoolean("enabled") -> "无障碍已启用"
                     else -> "无障碍未启用"
                 }
-                statusText.text = "状态：$coreLabel | $accessibilityLabel"
-                statusText.text = "${statusText.text} | ${MainStatusFormatter.terminalHeaderLabel(status)}"
-                statusText.text = "${statusText.text} | ${MainStatusFormatter.mcpHeaderLabel(status)}"
+                val terminalLabel = MainStatusFormatter.terminalHeaderLabel(status)
+                val mcpLabel = MainStatusFormatter.mcpHeaderLabel(status)
+
+                statusText.text = "$coreLabel | $accessibilityLabel | $terminalLabel | $mcpLabel"
                 detailStatusText.text = MainStatusFormatter.summarizeStatus(status)
             }
         }

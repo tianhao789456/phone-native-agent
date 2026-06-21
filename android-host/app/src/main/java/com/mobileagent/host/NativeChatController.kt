@@ -23,7 +23,7 @@ class NativeChatController(
         syncOfficialDocsOnce()
         AgentEventStore.record(
             "chat_started",
-            "鏀跺埌鐢ㄦ埛娑堟伅",
+            "开始处理用户消息",
             JSONObject()
                 .put("session_id", requestedSessionId ?: "")
                 .put("actions_approved", actionsApproved)
@@ -67,7 +67,10 @@ class NativeChatController(
         val effectiveActionsApproved =
             actionsApproved || runtimeConfig.permissionMode() == AgentRuntimeConfig.MODE_DEVELOPER
         val modelUserMessage = if (effectiveActionsApproved) {
-            "[APP_CONFIRMATION_APPROVED_FOR_THIS_REQUEST]\nThe user approved this current request in the Android app confirmation dialog. If a requested tool is allowed by permission mode, call it directly and follow its result.\n\n$message"
+            "[APP_CONFIRMATION_APPROVED_FOR_THIS_REQUEST]\n" +
+                "用户已在 Android 应用确认弹窗中批准本次请求。如果请求所需工具被当前权限模式允许，可以直接调用并根据工具结果继续。" +
+                "默认使用简体中文回复；如果这只是聊天、语言偏好或解释问题，不要为了确认状态而调用工具。\n\n" +
+                message
         } else {
             message
         }
@@ -92,6 +95,7 @@ class NativeChatController(
             .put("status", "not_started")
             .put("goal", "")
             .put("steps", JSONArray())
+            .put("done_when", JSONArray())
             .put("updated_at", 0L)
         val maxToolRounds = runtimeConfig.maxToolRounds()
         val outcome = taskLoopEngine.run(
@@ -131,11 +135,18 @@ class NativeChatController(
             runId = runId
         )
         taskLoop.put("memory_record", memoryRecord)
+        val loopFailureExperience = taskMemoryCoordinator.recordLoopFailureExperience(
+            userMessage = message,
+            taskLoop = taskLoop,
+            blocker = outcome.stoppedByLoopGuard,
+            runId = runId
+        )
+        taskLoop.put("loop_failure_experience", loopFailureExperience)
         messages.put(JSONObject().put("role", "assistant").put("content", finalText))
         sessionStore.saveMessages(sessionId, messages)
         AgentEventStore.record(
             "chat_finished",
-            "浠诲姟澶勭悊瀹屾垚",
+            "用户消息处理完成",
             JSONObject()
                 .put("run_id", runId)
                 .put("session_id", sessionId)

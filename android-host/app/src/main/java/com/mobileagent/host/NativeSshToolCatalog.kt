@@ -136,7 +136,7 @@ object NativeSshToolCatalog {
                 ),
         NativeToolDescriptor(
                     name = "file_push",
-                    description = "Upload a local file from the Android workspace or shared storage to the SSH host over SFTP.",
+                    description = "Upload a local file from the Android workspace or shared storage to the SSH host over SFTP. For phone files prefer aliases such as shared_storage:/Download/..., files_root:/..., or workspace:/...; Android absolute paths under /storage/emulated/0/... are accepted but should be normalized to shared_storage:/... in future calls. For Windows SFTP destinations, C:/Users/... is accepted and normalized to /C:/Users/....",
                     category = "ssh",
                     access = NativeToolAccess.TERMINAL_DELEGATION,
                     risk = NativeToolRisk.HIGH,
@@ -149,7 +149,7 @@ object NativeSshToolCatalog {
                 ),
         NativeToolDescriptor(
                     name = "file_pull",
-                    description = "Download a file from the SSH host into the Android workspace or shared storage over SFTP.",
+                    description = "Download a file from the SSH host into the Android workspace or shared storage over SFTP. Use local_path aliases such as shared_storage:/Download/..., files_root:/..., or workspace:/... when choosing the phone destination. For Windows SFTP sources, C:/Users/... is accepted and normalized to /C:/Users/....",
                     category = "ssh",
                     access = NativeToolAccess.TERMINAL_DELEGATION,
                     risk = NativeToolRisk.HIGH,

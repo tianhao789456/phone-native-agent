@@ -30,6 +30,16 @@ class NativeTaskPlanController {
             taskPlan.put("steps", steps)
         }
 
+        val incomingDoneWhen = arguments.optJSONArray("done_when")
+        if (incomingDoneWhen != null) {
+            taskPlan.put("done_when", sanitizeDoneWhen(incomingDoneWhen))
+        } else {
+            val doneWhenText = arguments.optString("done_when", "").trim()
+            if (doneWhenText.isNotBlank()) {
+                taskPlan.put("done_when", sanitizeDoneWhen(JSONArray().put(doneWhenText)))
+            }
+        }
+
         val stepId = arguments.optString("step_id", "").trim()
         if (stepId.isNotBlank()) {
             val steps = taskPlan.optJSONArray("steps") ?: JSONArray().also { taskPlan.put("steps", it) }
@@ -78,5 +88,14 @@ class NativeTaskPlanController {
             "pending", "in_progress", "completed", "failed", "blocked", "skipped", "cancelled" -> value.lowercase()
             else -> "pending"
         }
+    }
+
+    private fun sanitizeDoneWhen(values: JSONArray): JSONArray {
+        val result = JSONArray()
+        for (index in 0 until values.length().coerceAtMost(8)) {
+            val value = values.optString(index, "").trim()
+            if (value.isNotBlank()) result.put(value.take(240))
+        }
+        return result
     }
 }

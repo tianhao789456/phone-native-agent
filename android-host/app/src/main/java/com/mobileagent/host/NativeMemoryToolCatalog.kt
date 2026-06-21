@@ -46,6 +46,33 @@ object NativeMemoryToolCatalog {
                     required = NativeToolSchema.req("value")
                 ),
         NativeToolDescriptor(
+                    name = "memory_update",
+                    description = "Update one durable user memory item by target plus key or text. Use when the user corrects stale or wrong memory.",
+                    category = "memory",
+                    access = NativeToolAccess.READ_ONLY,
+                    risk = NativeToolRisk.LOW,
+                    properties = NativeToolSchema.props(
+                        "target" to NativeToolSchema.stringProp(""),
+                        "key" to NativeToolSchema.stringProp(""),
+                        "text" to NativeToolSchema.stringProp(""),
+                        "type" to NativeToolSchema.stringProp(""),
+                        "value" to NativeToolSchema.stringProp(""),
+                        "confidence" to NativeToolSchema.stringProp("")
+                    )
+                ),
+        NativeToolDescriptor(
+                    name = "memory_delete",
+                    description = "Delete one durable user memory item by target plus key or text. Use only when the user asks to remove or correct memory.",
+                    category = "memory",
+                    access = NativeToolAccess.READ_ONLY,
+                    risk = NativeToolRisk.LOW,
+                    properties = NativeToolSchema.props(
+                        "target" to NativeToolSchema.stringProp(""),
+                        "key" to NativeToolSchema.stringProp(""),
+                        "text" to NativeToolSchema.stringProp("")
+                    )
+                ),
+        NativeToolDescriptor(
                     name = "experience_search",
                     description = "Search reusable execution lessons by app/package/tool_scope/task_type/query. Use before repeated phone, desktop/MCP, or terminal tasks.",
                     category = "memory",

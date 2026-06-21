@@ -402,7 +402,11 @@ class NativeAgentCore(private val context: Context) {
         return remoteRuntime.reconnectForUi()
     }
 
-    fun newSession(): String = sessionStore.newSession()
+    fun newSession(): String {
+        val sessionId = sessionStore.newSession()
+        contextManager.resetUsage(sessionId)
+        return sessionId
+    }
 
     fun status(sessionId: String?): JSONObject {
         syncOfficialDocsOnce()

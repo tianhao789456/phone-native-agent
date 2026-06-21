@@ -33,6 +33,7 @@ object MainLocalCommandParser {
             "status", "-status", "--status", "/status" -> "status"
             "tools", "-tools", "--tools", "/tools" -> "tools"
             "docs", "-docs", "--docs", "/docs", "doc", "-doc", "/doc", "官方文档", "-官方文档", "/官方文档" -> "docs"
+            "commands", "-commands", "--commands", "/commands", "命令", "-命令", "/命令", "命令大全", "-命令大全", "/命令大全" -> "commands"
             "config", "-config", "--config", "/config", "settings", "-settings", "/settings" -> "config"
             "panel", "-panel", "--panel", "/panel", "menu", "-menu", "/menu" -> "panel"
             "reconnect", "-reconnect", "--reconnect", "/reconnect", "health", "-health", "/health" -> "reconnect"

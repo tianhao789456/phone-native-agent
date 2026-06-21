@@ -10,7 +10,7 @@ object ToolTraceFormatter {
             parts.add(
                 listOf(
                     "任务循环",
-                    "状态: ${loop.optString("status", "-")}",
+                    "状态: ${taskLoopStatusLabel(loop.optString("status", "-"))}",
                     "轮次: ${loop.optInt("rounds", 0)}/${loop.optInt("max_rounds", 0)}",
                     "步骤: ${loop.optInt("steps", 0)}",
                     "失败: ${loop.optInt("failed_steps", 0)}"
@@ -21,7 +21,7 @@ object ToolTraceFormatter {
                     listOf(
                         "计划",
                         "目标: ${plan.optString("goal", "-")}",
-                        "状态: ${plan.optString("status", "-")}",
+                        "状态: ${planStatusLabel(plan.optString("status", "-"))}",
                         compactPlanSteps(plan.optJSONArray("steps"))
                     ).filter { it.isNotBlank() }.joinToString("\n")
                 )
@@ -42,7 +42,7 @@ object ToolTraceFormatter {
 
     fun formatJsonPreview(value: JSONObject, maxChars: Int): String {
         val text = runCatching { value.toString(2) }.getOrElse { value.toString() }
-        return if (text.length <= maxChars) text else text.take(maxChars) + "\n... JSON truncated, chars=${text.length}"
+        return if (text.length <= maxChars) text else text.take(maxChars) + "\n... JSON 已截断，字符数=${text.length}"
     }
 
     fun summarizeToolTrace(trace: JSONArray?): String? {
@@ -53,11 +53,13 @@ object ToolTraceFormatter {
             val tool = item.optString("tool", "tool")
             val step = item.optInt("step", index + 1)
             val output = item.optJSONObject("output")
-            val ok = output?.optBoolean("ok", false) == true
             val verification = output?.optJSONObject("verification")
+            val verificationRequired = verification?.optBoolean("required", false) == true
+            val verificationOk = verification?.optBoolean("ok", false) == true
+            val verificationFailed = verificationRequired && !verificationOk
             val verificationText = when {
-                verification?.optBoolean("required", false) == true && verification.optBoolean("ok", false) -> " | 先前检查成功"
-                verification?.optBoolean("required", false) == true -> " | 验证失败"
+                verificationRequired && verificationOk -> " | 验证通过"
+                verificationFailed -> " | 验证失败"
                 else -> ""
             }
             val autoRecovery = output?.optJSONObject("auto_recovery")
@@ -68,9 +70,10 @@ object ToolTraceFormatter {
                 else -> ""
             }
             val state = when {
-                ok -> "成功"
+                verificationFailed -> "失败"
                 output?.optBoolean("needs_confirmation") == true -> "待确认"
                 output?.optBoolean("needs_permission") == true -> "待授权"
+                output?.optBoolean("ok", false) == true -> "成功"
                 else -> "失败"
             }
             val verificationRecovery = output?.optJSONObject("verification_recovery")
@@ -78,7 +81,7 @@ object ToolTraceFormatter {
                 "recovered" -> " | 验证恢复成功"
                 "retry_failed" -> " | 验证重试失败"
                 "recovery_failed" -> " | 验证恢复失败"
-                "not_attempted" -> " | 未尝试"
+                "not_attempted" -> " | 未尝试恢复"
                 else -> ""
             }
             lines.add("#$step $state $tool$verificationText$recoveryText$verificationRecoveryText")
@@ -88,13 +91,7 @@ object ToolTraceFormatter {
 
     fun summarizeTaskLoop(loop: JSONObject?): String? {
         if (loop == null) return null
-        val state = when (loop.optString("status")) {
-            "completed" -> "完成"
-            "completed_with_failures" -> "完成但有失败"
-            "max_rounds_reached" -> "达到轮数上限"
-            "no_tools" -> "未找到工具"
-            else -> loop.optString("status", "未知")
-        }
+        val state = taskLoopStatusLabel(loop.optString("status"))
         val plan = loop.optJSONObject("plan")
         val planText = summarizePlan(plan)
         val base = "任务循环 $state | 步骤 ${loop.optInt("steps", 0)} | 失败 ${loop.optInt("failed_steps", 0)} | 轮次 ${loop.optInt("rounds", 0)}/${loop.optInt("max_rounds", 0)}"
@@ -106,7 +103,7 @@ object ToolTraceFormatter {
         val lines = mutableListOf("步骤:")
         for (index in 0 until steps.length().coerceAtMost(12)) {
             val step = steps.optJSONObject(index) ?: continue
-            lines.add("- ${step.optString("id", "${index + 1}")}: ${step.optString("status", "-")} ${step.optString("title", "").take(80)}")
+            lines.add("- ${step.optString("id", "${index + 1}")}: ${planStatusLabel(step.optString("status", "-"))} ${step.optString("title", "").take(80)}")
         }
         if (steps.length() > 12) lines.add("- ... 还有 ${steps.length() - 12} 步")
         return lines.joinToString("\n")
@@ -118,7 +115,7 @@ object ToolTraceFormatter {
         val lines = mutableListOf<String>()
         val step = item.optInt("step", fallbackStep)
         lines.add("工具 #$step ${item.optString("tool", "tool")}")
-        lines.add("状态: ${item.optString("state", "-")} | 耗时: ${item.optLong("duration_ms", 0)}ms")
+        lines.add("状态: ${toolStateLabel(item.optString("state", "-"))} | 耗时: ${item.optLong("duration_ms", 0)}ms")
         lines.add("调用参数:\n${formatJsonPreview(item.optJSONObject("arguments") ?: JSONObject(), 1200)}")
         toolResultSummary(output, result)?.let { lines.add("结果: $it") }
         output.optString("error", "").takeIf { it.isNotBlank() }?.let { lines.add("错误: $it") }
@@ -179,7 +176,7 @@ object ToolTraceFormatter {
         val truncated = folded?.optBoolean("truncated", false) ?: (text.length > 2000)
         val chars = folded?.optInt("chars", text.length) ?: text.length
         val preview = text.take(2000)
-        val suffix = if (truncated || text.length > preview.length) "\n... output truncated, chars=$chars" else ""
+        val suffix = if (truncated || text.length > preview.length) "\n... 输出已截断，字符数=$chars" else ""
         lines.add("$key:\n$preview$suffix")
     }
 
@@ -187,15 +184,7 @@ object ToolTraceFormatter {
         if (plan == null) return null
         val steps = plan.optJSONArray("steps") ?: return null
         if (steps.length() == 0) return null
-        val status = when (plan.optString("status")) {
-            "not_started" -> "未开始"
-            "in_progress" -> "进行中"
-            "blocked" -> "受阻"
-            "completed" -> "完成"
-            "failed" -> "失败"
-            "cancelled" -> "取消"
-            else -> plan.optString("status", "未知")
-        }
+        val status = planStatusLabel(plan.optString("status"))
         var completed = 0
         var failed = 0
         for (index in 0 until steps.length()) {
@@ -208,5 +197,39 @@ object ToolTraceFormatter {
         val goal = plan.optString("goal", "").take(40)
         val goalText = if (goal.isBlank()) "" else " | $goal"
         return "计划 $status | ${completed}/${steps.length()} 完成 | 异常 $failed$goalText"
+    }
+
+    private fun taskLoopStatusLabel(status: String): String {
+        return when (status) {
+            "completed" -> "完成"
+            "completed_with_failures" -> "完成但有失败"
+            "max_rounds_reached" -> "达到轮数上限"
+            "blocked_by_loop_guard" -> "已暂停，避免重复失败"
+            "user_stopped" -> "用户已停止"
+            "no_tools" -> "未找到工具"
+            else -> status.ifBlank { "未知" }
+        }
+    }
+
+    private fun planStatusLabel(status: String): String {
+        return when (status) {
+            "not_started" -> "未开始"
+            "in_progress" -> "进行中"
+            "blocked" -> "受阻"
+            "completed" -> "完成"
+            "failed" -> "失败"
+            "cancelled" -> "取消"
+            else -> status.ifBlank { "未知" }
+        }
+    }
+
+    private fun toolStateLabel(state: String): String {
+        return when (state) {
+            "success" -> "成功"
+            "failed", "failure" -> "失败"
+            "needs_confirmation" -> "待确认"
+            "needs_permission" -> "待授权"
+            else -> state.ifBlank { "未知" }
+        }
     }
 }

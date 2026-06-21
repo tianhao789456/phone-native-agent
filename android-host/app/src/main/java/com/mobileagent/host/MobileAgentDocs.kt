@@ -128,7 +128,8 @@ object MobileAgentDocs {
 
             常用入口：
 
-            - 本地命令：`-help`、`-docs`、`-tools`、`-status`、`-config`、`-panel`
+            - 本地命令：`-help`、`-commands`、`-docs`、`-tools`、`-status`、`-config`、`-panel`
+            - 操作面板：点“命令大全”可查看中文简介，并一键复制或填入输入框。
             - 工具清单：`tool_registry`
             - 自检：`self_health_check`
             - 日志：`system_logs`
@@ -138,32 +139,7 @@ object MobileAgentDocs {
     }
 
     private fun commands(): String {
-        return """
-            # 应用本地命令
-
-            在应用聊天框里输入这些命令，不会发送给模型，会由应用本地执行。
-
-            - `-new`：开启新会话。
-            - `-status`：刷新运行状态。
-            - `-tools`：显示当前内置工具名。
-            - `-docs`：显示官方文档目录。
-            - `-config`：打开配置窗口。
-            - `-panel`：打开操作面板。
-            - `-reconnect`：重连和自检核心、桥接、终端后端。
-            - `-logs`：显示系统日志。
-            - `-failures`：显示最近失败分析。
-            - `-rounds 50`：设置工具调用轮数上限。
-            - `-perm safe|ask|danger|developer`：切换权限模式。
-            - `-terminal on|off|status|http://127.0.0.1:8787`：配置终端接口。
-            - `-clear`：清空当前显示。
-            - `-key sk-...`：保存模型 API Key 到应用私有配置。
-            - `-help`：显示帮助。
-
-            说明：
-
-            - 本地命令适合人直接操作。
-            - Agent 需要了解能力时，应优先使用 `docs_index`、`docs_read`、`tool_registry`。
-        """.trimIndent()
+        return MainCommandCatalog.docsText()
     }
 
     private fun tools(): String {

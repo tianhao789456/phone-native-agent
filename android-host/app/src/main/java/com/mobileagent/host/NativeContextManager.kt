@@ -30,10 +30,7 @@ class NativeContextManager(
             .put("messages", messages.length())
             .put("estimated_tokens", estimated)
             .put("model_window", modelWindowTokens)
-            .put(
-                "window_used_percent",
-                if (estimated == 0) 0.0 else estimated * 100.0 / modelWindowTokens.toDouble()
-            )
+            .put("window_used_percent", if (estimated == 0) 0.0 else estimated * 100.0 / modelWindowTokens.toDouble())
             .put("compacted", compacted)
             .put("compactions", prefs.getInt("context_compactions", 0))
             .put("auto_compact_token_threshold", compactTokenThreshold)
@@ -124,6 +121,15 @@ class NativeContextManager(
             .apply()
     }
 
+    fun resetUsage(sessionId: String) {
+        prefs.edit()
+            .remove(usageLatestKey(sessionId))
+            .remove(usagePromptKey(sessionId))
+            .remove(usageHitKey(sessionId))
+            .remove(usageMissKey(sessionId))
+            .apply()
+    }
+
     fun latestUsage(sessionId: String?): JSONObject {
         val keySessionId = sessionId ?: prefs.getString("current_session_id", null) ?: "default"
         val usage = runCatching { JSONObject(prefs.getString(usageLatestKey(keySessionId), "{}") ?: "{}") }
@@ -184,8 +190,8 @@ class NativeContextManager(
         }
         val builder = StringBuilder()
         builder.append(contextCompactionMarker).append("\n")
-        builder.append("上下文自动压缩统计：总消息=").append(beforeMessages)
-            .append("，总token=").append(beforeTokens).append("。\n")
+        builder.append("上下文自动压缩摘要：总消息=").append(beforeMessages)
+            .append("，估算 token=").append(beforeTokens).append("。\n")
         if (previousSummary.isNotBlank()) {
             builder.append("\n上一版摘要如下：\n")
                 .append(previousSummary.removePrefix(contextCompactionMarker).trim().take(1800))

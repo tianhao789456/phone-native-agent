@@ -34,6 +34,7 @@ class MainLocalCommandRunner(private val actions: Actions) {
             }
             "tools" -> actions.addSystem(actions.localToolsSummary())
             "docs" -> actions.addSystem(actions.officialDocsSummary())
+            "commands" -> actions.addSystem(MainCommandCatalog.helpText())
             "config" -> actions.showConfigDialog()
             "panel" -> actions.showActionPanel()
             "reconnect" -> actions.runReconnect()
@@ -65,26 +66,6 @@ class MainLocalCommandRunner(private val actions: Actions) {
     }
 
     companion object {
-        const val HELP_TEXT =
-            "本地命令：\n" +
-                "-new  开启新会话\n" +
-                "-status  刷新状态\n" +
-                "-tools  查看内置工具\n" +
-                "-docs  查看官方文档\n" +
-                "-config  打开配置\n" +
-                "-panel  操作面板\n" +
-                "-reconnect  重连/自检\n" +
-                "-logs  系统日志\n" +
-                "-failures  最近失败分析\n" +
-                "-compact  压缩上下文\n" +
-                "-rounds 50  设置工具轮数\n" +
-                "-perm safe|ask|danger|developer  切换权限模式\n" +
-                "-terminal on|off|status|recover|health|http://127.0.0.1:8787  配置终端接口\n" +
-                "-mcp on|off|status|tools [关键词]|token <token>|<baseUrl>\n" +
-                "      配置并检测 Windows MCP/远程 MCP\n" +
-                "-ssh on|off|status|connect|disconnect|<host>  配置 SSH 连接\n" +
-                "-clear  清空当前显示\n" +
-                "-key sk-...  保存模型 API Key\n" +
-                "-help  显示帮助"
+        val HELP_TEXT: String = MainCommandCatalog.helpText()
     }
 }
