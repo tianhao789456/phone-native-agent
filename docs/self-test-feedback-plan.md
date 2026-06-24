@@ -1,75 +1,75 @@
-# 手机端自测反馈测试计划（v1）
+# Phone Self-Test Feedback Plan (v1)
 
-## 目标
+## Goal
 
-保证手机端也能读懂并展示自测结果，而不是只把执行日志丢出来。
+Ensure the phone side can also read and display self-test results, rather than just dumping execution logs.
 
-## 先区分两类验证
+## Two Types of Verification
 
-### PC 侧验证
+### PC-Side Verification
 
-PC 侧验证不需要安装 Android App。
+PC-side verification does not require an Android App installation.
 
-它只验证 Python Agent 核心、CLI 命令、HTTP 路由、协议拼装和自测结果结构是否稳定。当前已覆盖：
+It only validates that the Python Agent core, CLI commands, HTTP routes, protocol assembly, and self-test result structure are stable. Currently covered:
 
 - `agent.run_self_test()`
 - CLI `/self-test`
 - HTTP `GET /self-test`
-- `status / summary / checks / recommendations` 返回结构
+- `status / summary / checks / recommendations` response structure
 
-对应测试：
+Corresponding tests:
 
 - `tests/test_self_test.py`
 - `tests/test_agent_protocol.py`
 - `tests/test_http.py`
 - `tests/test_cli.py`
 
-### 手机真机验证
+### Phone Real-Device Verification
 
-手机端验证必须安装最新 APK，并开启必要权限。
+Phone-side verification requires installing the latest APK and enabling necessary permissions.
 
-需要验证这些内容时，必须走真机：
+These must be verified on a real device:
 
-- App UI 是否能展示 `/self-test` 结果
-- Android Host bridge 是否能连通
-- 无障碍工具是否能返回屏幕结构
-- native tool 是否能调用
-- 失败建议是否能在手机端显示给用户
+- Whether the App UI can display `/self-test` results
+- Whether the Android Host bridge is reachable
+- Whether Accessibility tools return the screen structure
+- Whether native tools can be called
+- Whether failure recommendations are displayed to the user on the phone
 
-前置条件：
+Prerequisites:
 
-- 安装最新 APK
-- 开启无障碍服务
-- 授予通知、存储等必要权限
-- 启动 Android Host / Python Host 对应链路
-- 如需验证 host bridge，打开 `include_host_bridge_check`
+- Install the latest APK
+- Enable Accessibility Service
+- Grant necessary permissions (notifications, storage, etc.)
+- Start the Android Host / Python Host connection
+- To verify the host bridge, enable `include_host_bridge_check`
 
-## 手机端验证步骤
+## Phone-Side Verification Steps
 
-1. 安装最新 APK 并启动手机端 Agent。
-2. 在手机端发送 `/self-test`，或请求 `GET /self-test`。
-3. 校验返回至少包含：
-   - `status`（`ok` / `warn` / `error`）
+1. Install the latest APK and start the phone-side Agent.
+2. Send `/self-test` on the phone, or request `GET /self-test`.
+3. Verify the response includes at least:
+   - `status` (`ok` / `warn` / `error`)
    - `summary.total / ok / warn / error`
    - `checks`
    - `recommendations`
-4. 检查关键 check 名：
+4. Check for these key check names:
    - `python_runtime`
    - `agent_config`
    - `session_store`
    - `tool_registry`
    - `critical_tool:get_time`
-5. 如果启用 host bridge 检查，还应包含：
+5. If host bridge check is enabled, it should also include:
    - `host_bridge`
 
-## 预期行为
+## Expected Behavior
 
-- `status=ok` 时，`recommendations` 可以为空。
-- `status=warn/error` 时，应给出对应建议，并在手机界面展示。
-- host bridge 默认不强制检查，避免 PC 单测或无手机环境下误报。
+- When `status=ok`, `recommendations` can be empty.
+- When `status=warn/error`, corresponding recommendations should be provided and displayed in the phone UI.
+- Host bridge is not forced by default, to avoid false alarms during PC-only testing or when no phone is connected.
 
-## 回归用例
+## Regression Cases
 
-- `tool_registry` 缺少 `get_time` 时，应出现 `critical_tool:get_time` 告警。
-- API key 为空时，`agent_config` 应为 `error`，整体 `status=error`。
-- 默认不检查 `host_bridge`；启用 `include_host_bridge_check` 后，应返回 `host_bridge` check。
+- If `tool_registry` is missing `get_time`, a `critical_tool:get_time` warning should appear.
+- If the API key is empty, `agent_config` should be `error`, and the overall `status` should be `error`.
+- `host_bridge` is not checked by default; after enabling `include_host_bridge_check`, the `host_bridge` check should be returned.
