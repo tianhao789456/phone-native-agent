@@ -1,39 +1,39 @@
-# Mobile Agent / 手机 Agent
+# Mobile Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/tianhao789456/phone-native-agent)](https://github.com/tianhao789456/phone-native-agent/releases/latest)
 
-手机原生 AI Agent 原型。它把 Agent 循环、工具、任务轨迹、插件流程和 Android Host 桥接尽量放在手机侧，而不是把手机当成一个被动的 ADB 目标。
+A phone-native AI Agent prototype. It keeps the agent loop, tools, task traces, plugin workflows, and Android Host bridge on the phone itself — rather than treating the phone as a passive ADB target.
 
-当前项目仍然是实验性原型，但已经不是空壳 demo：它包含 Kotlin Android Host App、Python CLI/HTTP 运行时、持久化会话、Android 屏幕/动作工具、任务工作区、插件报告，以及 `Plan / Act / Verify / Retry` 执行闭环。
+This is still an experimental prototype, but it's no longer just a skeleton: it ships a Kotlin Android Host App, a Python CLI/HTTP runtime, persistent sessions, Android screen/action tools, task workspaces, plugin reports, and a **Plan / Act / Verify / Retry** execution loop.
 
 ![Mobile Agent Android host](docs/assets/mobile-agent-home.png)
 
-## 中文说明
+## Overview
 
-这个项目主要解决一件事：让手机自己承担自己的 Agent 执行面。
+This project solves one core problem: **let the phone carry its own agent execution surface.**
 
-- 手机端是主运行面，Android Host App 负责界面、状态和工具入口。
-- `AccessibilityService` 是主要的屏幕观察和动作后端。
-- `Termux` 是可选的终端/脚本后端，不是强依赖。
-- SSH 是手机连接电脑的稳定控制链路，可执行 PowerShell、传文件、修复 MCP 服务。
-- MCP 可作为远程工具扩展，让手机 Agent 调用桌面能力。
-- 任务执行不是“工具返回 ok 就算完成”，而是保留计划、证据、验证、重试和失败分析。
+- The phone is the primary runtime. The Android Host App owns the UI, state, and tool entry points.
+- `AccessibilityService` is the main screen observation and action backend.
+- `Termux` is an optional terminal/script backend, not a hard dependency.
+- SSH is the stable control channel from phone to PC — run PowerShell, transfer files, repair MCP services.
+- MCP extends remote tool capabilities, letting the phone agent call desktop resources.
+- Task execution doesn't stop at "tool returned ok" — it retains plans, evidence, verification, retries, and failure analysis.
 
-## 核心亮点
+## Key Highlights
 
-- 手机原生运行面：Android Host App 就是主界面、状态中心和工具入口。
-- 中文优先：App UI、状态、日志和操作说明按中文日常使用设计。
-- 证据驱动执行闭环：`Plan / Act / Verify / Retry`，带重试预算、失败报告和完成复核。
-- 结构化手机 UI 观察：Accessibility 快照、元素索引、动作列表，减少盲点截图点击。
-- 原生 Intent 工具：支持打开 URL、打开文件、分享文件等 Android 原生动作。
-- 渐进式工具加载：工具、插件、Skill、MCP 都尽量先给摘要，需要时再展开详情。
-- 记忆与经验接口：支持用户资料、经验、procedure、学习记录等手机侧长期上下文。
-- SSH/PC Bridge：手机可通过 LAN 或 Tailscale 连接电脑，执行命令和 SFTP 文件传输。
-- 多 MCP 预留：支持手机本地 MCP、桌面 MCP、Desktop Control MCP 等多服务配置。
-- Termux 后端恢复：支持诊断、恢复、熔断和后台 HTTP 后端重启。
+- **Phone-native runtime** – the Android Host App is the main UI, status center, and tool gateway.
+- **Chinese-first UI** – app UI, status messages, logs, and instructions are designed for daily Chinese use.
+- **Evidence-driven execution loop** – `Plan / Act / Verify / Retry` with retry budgets, failure reports, and completion review.
+- **Structured phone UI observation** – Accessibility snapshots, element indices, action lists — reduces blind screenshot-clicking.
+- **Native Intent tools** – open URLs, open files, share files, and other Android native actions.
+- **Progressive tool loading** – tools, plugins, skills, and MCP are summarized first; details are expanded only when needed.
+- **Memory and experience interface** – user profiles, experience, procedures, learning records, and other phone-side long-term context.
+- **SSH/PC Bridge** – the phone connects to a PC over LAN or Tailscale to run commands and transfer files via SFTP.
+- **Multi-MCP support** – phone-local MCP, desktop MCP, Desktop Control MCP, and more.
+- **Termux backend recovery** – diagnostics, recovery, circuit-breaker, and HTTP backend restart.
 
-## 快速开始
+## Quick Start
 
 ```sh
 git clone https://github.com/tianhao789456/phone-native-agent.git
@@ -41,16 +41,16 @@ cd phone-native-agent
 python -m venv .venv
 ```
 
-Windows PowerShell:
+**Windows PowerShell:**
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+.\\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
 python -m mobile_agent.hosts.cli --mock
 ```
 
-macOS / Linux / Termux:
+**macOS / Linux / Termux:**
 
 ```sh
 . .venv/bin/activate
@@ -59,15 +59,15 @@ python -m pip install -e ".[dev]"
 python -m mobile_agent.hosts.cli --mock
 ```
 
-## 配置模型
+## Configure a Model
 
-复制环境变量模板并填入自己的 key：
+Copy the environment variable template and fill in your own key:
 
 ```sh
 cp .env.example .env
 ```
 
-OpenAI-compatible provider 示例：
+Example with an OpenAI-compatible provider:
 
 ```sh
 DEEPSEEK_API_KEY=...
@@ -76,7 +76,7 @@ MOBILE_AGENT_MODEL=deepseek-v4-flash
 MOBILE_AGENT_BASE_URL=https://api.deepseek.com
 ```
 
-然后运行：
+Then run:
 
 ```sh
 python -m mobile_agent.hosts.cli
@@ -84,11 +84,11 @@ python -m mobile_agent.hosts.cli
 
 ## Android Host App
 
-构建要求：
+Build requirements:
 
 - JDK 17
 - Android SDK API 35
-- Android build tools，可通过 Android Studio 或 `ANDROID_HOME` 提供
+- Android build tools (provided by Android Studio or `ANDROID_HOME`)
 
 ```sh
 cd android-host
@@ -103,11 +103,33 @@ cd android-host
 adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 ```
 
-使用屏幕观察和动作工具前，需要在手机系统设置里启用本 App 的无障碍服务。
+Before using screen observation and action tools, enable the app's Accessibility Service in your phone's system settings.
 
-## Termux 后端
+## Minimal Personal Assistant Loop
 
-Termux 是可选后端，用于手机本地脚本和终端能力。
+The current self-use target is intentionally narrow:
+
+1. **Ask and research** – use `web_search`, `web_extract`, `http_get`, and `http_post` for public web lookup, page reading, and user-requested API calls. Results include source URL/content fields and structured failure categories so the task loop can recover instead of crashing.
+2. **Find and share files** – use `find_files`, `search_files`, `read_file`, then `share_text`, `share_file`, `share_files`, or `open_file_with`. File sharing uses Android `ACTION_SEND` / `ACTION_SEND_MULTIPLE` and FileProvider content URI grants, not fragile WeChat UI clicking.
+3. **Watch important notifications** – enable the notification listener in Android settings, then use `notification_status`, `notification_recent`, `notification_rules_get`, `notification_rules_set`, `notification_mark_important`, and `notification_summarize_candidates`. Notification text is hidden by default in recent-list output; request `include_text=true` only when the user explicitly wants to inspect contents.
+
+## Stable PC Connection Mode
+
+The Android app treats the computer as one logical target, `my_pc`. The transport behind that target is selected by profile priority:
+
+1. `home_lan` – same-Wi-Fi LAN SSH, preferred for commands and large files.
+2. `tailscale` or `wireguard` – VPN fallback when the phone is away from home.
+3. `vps_reverse` – last-resort reverse tunnel for rescue commands and short diagnostics.
+
+Use `connection_profiles` to view or update local-only profile settings (`name`, `type`, `host`, `port`, `user`, `enabled`, `priority`). Use `connection_select`, `connection_status`, `connection_diagnose`, and `connection_reconnect` before PC work. The selector returns `selected_profile`, `attempted_profiles`, `failure_category`, and `next_recommended_action` so the agent can stop blind retrying.
+
+`file_push`, `file_pull`, and `pc_file_workflow` now run the selector first by default. Large files are steered toward `home_lan`; when a large transfer would use Tailscale or VPS fallback, the tool returns a policy warning because speed is limited by the home upload link or the relay path.
+
+Keep real VPS hosts, private IPs, usernames, keys, and tokens in local app configuration only. Do not commit them to the public repository. For reliable background reconnects, allow the VPN app and Mobile Agent to run in the background, disable aggressive battery restrictions, and keep the PC SSH service enabled.
+
+## Termux Backend
+
+Termux is an optional backend for on-device scripting and terminal capabilities.
 
 ```sh
 pkg update
@@ -117,29 +139,29 @@ cd phone-native-agent
 sh scripts/start-http-termux.sh
 ```
 
-如果需要让 Android Host App 自动拉起 Termux HTTP 后端，Termux 侧需要允许外部命令：
+To let the Android Host App automatically start the Termux HTTP backend, Termux needs to allow external commands:
 
 ```sh
 sh scripts/enable-termux-run-command.sh
 ```
 
-## 电脑控制
+## PC Control
 
-手机 Agent 可以通过 SSH 连接电脑，完成：
+The phone agent can connect to a PC over SSH to:
 
-- PowerShell / shell 命令执行；
-- 手机文件推送到电脑；
-- 电脑处理结果回传手机；
-- 检查和恢复远程 MCP 服务；
-- 通过 Tailscale 在外网环境访问自己的电脑。
+- Execute PowerShell / shell commands
+- Push files from phone to PC
+- Pull processed results back from PC to phone
+- Inspect and restore remote MCP services
+- Access your PC remotely via Tailscale when away from home
 
-详见 [SSH + PC 控制说明](docs/ssh-pc-control.md)。
+See [SSH + PC Control Guide](docs/ssh-pc-control.md).
 
-## 架构
+## Architecture
 
 ```mermaid
 flowchart LR
-    User["用户"]
+    User["User"]
     Android["Android Host App<br/>Kotlin UI + native tools"]
     Core["Agent Core<br/>Plan-Act-Verify-Retry"]
     Tools["Tool Registry<br/>phone, workspace, plugins, skills, MCP, SSH"]
@@ -156,22 +178,22 @@ flowchart LR
     Tools --> PC
 ```
 
-## 开发
+## Development
 
-运行 Python 测试：
+Run Python tests:
 
 ```sh
 python -m pytest
 ```
 
-运行 Android 构建：
+Build the Android app:
 
 ```sh
 cd android-host
 ./gradlew assembleDebug
 ```
 
-仓库结构：
+Repository layout:
 
 ```text
 android-host/          Kotlin Android Host App
@@ -183,26 +205,26 @@ tests/                 Python tests
 docs/                  Architecture notes, release notes, assets
 ```
 
-## 当前状态
+## Current Status
 
-这是个人实验项目，MIT 协议开源，不承诺长期维护。
+This is a personal experimental project, open-sourced under the MIT license with no promise of long-term maintenance.
 
-欢迎：
+Contributions welcome:
 
-- star；
-- 提交可复现 issue；
-- 发送聚焦的小 PR；
-- fork 后按自己的方向继续做。
+- ⭐ Star the repo
+- File reproducible issues
+- Send focused small PRs
+- Fork it and take it in your own direction
 
-## 安全说明
+## Security
 
-Mobile Agent 可以暴露很强的本地工具能力。默认应使用安全模式；只有在自己的设备上，并且理解工具风险时，再启用更高权限模式。
+Mobile Agent can expose powerful local tool capabilities. Use safe mode by default; only enable higher permission levels on your own devices when you understand the risks.
 
-不要把 API key、私聊记录、任务轨迹、截图、Android 构建产物或本机运行时 token 提交进仓库。
+Do not commit API keys, private chat logs, task traces, screenshots, Android build artifacts, or local runtime tokens into the repository.
 
 ## Release Assets
 
-- [手机端截图](docs/assets/mobile-agent-home.png)
-- [仓库预览图](docs/assets/github-social-preview.png)
+- [Phone screenshot](docs/assets/mobile-agent-home.png)
+- [Repository preview image](docs/assets/github-social-preview.png)
 - [v0.3.0-alpha Release Notes](docs/releases/v0.3.0-alpha.md)
 - [v0.2.0-alpha Release Notes](docs/releases/v0.2.0-alpha.md)
