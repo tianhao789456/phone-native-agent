@@ -2,12 +2,16 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/tianhao789456/phone-native-agent)](https://github.com/tianhao789456/phone-native-agent/releases/latest)
+[![Stars](https://img.shields.io/github/stars/tianhao789456/phone-native-agent?style=social)](https://github.com/tianhao789456/phone-native-agent/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/tianhao789456/phone-native-agent)](https://github.com/tianhao789456/phone-native-agent/commits/main)
 
-A phone-native AI Agent prototype. It keeps the agent loop, tools, task traces, plugin workflows, and Android Host bridge on the phone itself — rather than treating the phone as a passive ADB target.
+**A phone-resident AI agent.** Your phone runs the agent loop, owns the tools, and decides what to do — the cloud only provides the model. Not a desktop remote-control tool, not an ADB automation script, not a Termux-only shell wrapper.
 
-This is still an experimental prototype, but it's no longer just a skeleton: it ships a Kotlin Android Host App, a Python CLI/HTTP runtime, persistent sessions, Android screen/action tools, task workspaces, plugin reports, and a **Plan / Act / Verify / Retry** execution loop.
+The Android Host App ships a Kotlin single-Activity UI, an AccessibilityService backend, a Plan-Act-Verify-Retry execution loop, persistent sessions, screen/action tools, task workspaces, plugin reports, and an SSH/MCP bridge to remote resources.
 
 ![Mobile Agent Android host](docs/assets/mobile-agent-home.png)
+
+> Phone edits itself · phone tests itself · phone extends itself · phone controls apps locally — see [Architecture Direction](docs/architecture-direction.md).
 
 ## Overview
 
@@ -22,18 +26,20 @@ This project solves one core problem: **let the phone carry its own agent execut
 
 ## Key Highlights
 
-- **Phone-native runtime** – the Android Host App is the main UI, status center, and tool gateway.
-- **Chinese-first UI** – app UI, status messages, logs, and instructions are designed for daily Chinese use.
-- **Evidence-driven execution loop** – `Plan / Act / Verify / Retry` with retry budgets, failure reports, and completion review.
-- **Structured phone UI observation** – Accessibility snapshots, element indices, action lists — reduces blind screenshot-clicking.
-- **Native Intent tools** – open URLs, open files, share files, and other Android native actions.
-- **Progressive tool loading** – tools, plugins, skills, and MCP are summarized first; details are expanded only when needed.
-- **Memory and experience interface** – user profiles, experience, procedures, learning records, and other phone-side long-term context.
-- **SSH/PC Bridge** – the phone connects to a PC over LAN or Tailscale to run commands and transfer files via SFTP.
-- **Multi-MCP support** – phone-local MCP, desktop MCP, Desktop Control MCP, and more.
-- **Termux backend recovery** – diagnostics, recovery, circuit-breaker, and HTTP backend restart.
+- **Phone-resident runtime** – the Android Host App is the main UI, status center, and tool gateway. No desktop daemon, no always-on server, no USB cable.
+- **Plan / Act / Verify / Retry execution loop** – step plans, done-when conditions, per-tool verification (10 verifier branches), retry budgets, failure reports, completion review. Not just "call tool, return output".
+- **Structured Accessibility-based observation** – snapshots carry element indices and action lists, so the agent reasons about nodes rather than blindly tapping pixel coordinates.
+- **Native Android Intent tools** – `open_url`, `share_file`, `open_file_with` go through the system `ACTION_SEND` / `ACTION_VIEW` + FileProvider, not fragile UI automation.
+- **Progressive tool loading** – the model only sees a thin catalog first; details are pulled in on demand via `tool_info`. Keeps context lean.
+- **SSH / PC bridge with multi-profile fallback** – `home_lan → tailscale → vps_reverse` automatic selector for commands and SFTP transfers.
+- **Multi-MCP support** – phone-local MCP, desktop MCP, and remote MCP servers reachable over the bridge.
+- **Persistent memory and experience** – user profiles, procedures, learning records, and experience notes survive across sessions.
+- **Termux backend with circuit-breaker** – diagnostics, recovery, and HTTP backend restart for the optional Python on-device runtime.
+- **Chinese-first UI** – app UI, status messages, logs, and quick-start docs are written for daily Chinese use.
 
 ## Quick Start
+
+> New here? Read [docs/new-user-quick-start.md](docs/new-user-quick-start.md) for a 5-minute walkthrough.
 
 ```sh
 git clone https://github.com/tianhao789456/phone-native-agent.git
@@ -207,14 +213,14 @@ docs/                  Architecture notes, release notes, assets
 
 ## Current Status
 
-This is a personal experimental project, open-sourced under the MIT license with no promise of long-term maintenance.
+Active development. Release notes live under [docs/releases/](docs/releases/), and the long-term direction is captured in [docs/architecture-direction.md](docs/architecture-direction.md).
 
-Contributions welcome:
+If this project is useful to you:
 
-- ⭐ Star the repo
-- File reproducible issues
-- Send focused small PRs
-- Fork it and take it in your own direction
+- ⭐ Star the repo — it tells me to keep going
+- 🐛 File reproducible issues
+- 🔧 Send focused small PRs
+- 🍴 Fork it and take it in your own direction
 
 ## Security
 
